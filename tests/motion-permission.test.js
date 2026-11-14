@@ -54,6 +54,8 @@ function createApp(requestPermission) {
     return {
         element,
         acceleration() { return runInNewContext("rawAccelX", context); },
+        axes() { return runInNewContext("[rawAccelX, rawAccelY, rawAccelZ]", context); },
+        setOrientation(angle) { window.screen = { orientation: { angle } }; },
         dispatch(type, event) {
             for (const handler of [...(listeners.get(type) || [])]) handler(event);
         },
@@ -86,6 +88,22 @@ Deno.test("requests motion permission on touch release and receives acceleration
     assert.equal(app.acceleration(), 4);
     app.runTimers();
     assert.equal(app.element("motionPermission").hidden, true);
+});
+
+Deno.test("screen-relative axes follow orientation and accept partial sensor data", async () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.clickButton();
+    await flush();
+    app.dispatch("devicemotion", { acceleration: { x: 2, y: 3, z: 4 } });
+    assert.deepEqual(Array.from(app.axes()), [2, 3, 4]);
+    app.setOrientation(90);
+    app.dispatch("devicemotion", { acceleration: { x: 2, y: 3, z: 4 } });
+    const [x, y, z] = app.axes();
+    assert.ok(Math.abs(x - 3) < 1e-10);
+    assert.ok(Math.abs(y + 2) < 1e-10);
+    assert.equal(z, 4);
+    app.dispatch("devicemotion", { acceleration: { x: null, y: null, z: 5 } });
+    assert.deepEqual(Array.from(app.axes()), [0, 0, 5]);
 });
 
 Deno.test("reports missing sensor data after permission is granted", async () => {

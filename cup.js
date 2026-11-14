@@ -1,4 +1,4 @@
-// 紙コップ水シミュレーター: 断面図の紙コップ + Verlet 粒子による水
+// 紙コップ水シミュレーター
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const info = document.getElementById('info');
@@ -15,18 +15,27 @@ sensitivityInput.addEventListener('input', () => {
 });
 const MAX_LATERAL = 0.8;  // 重力に対する横加速度の上限比
 const ACCEL_DEADZONE = 1.5; // m/s² 未満 (手持ちの微振動) は無視
+const BASE_SENSITIVITY = 1.5;
+const WATER_GRAVITY = 0.08;
 // 横加速度 (m/s²) から重力に対する横方向の割合を求める
-const lateral = () => {
-    const a = Math.abs(accelX) - ACCEL_DEADZONE;
+const motionInput = (acceleration) => {
+    const a = Math.abs(acceleration) - ACCEL_DEADZONE;
     if (a <= 0) return 0;
-    const v = Math.min(MAX_LATERAL, a * sensitivity / 9.8);
-    return accelX < 0 ? v : -v; // 端末が右へ加速すると水は左へ偏る
+    const v = Math.min(MAX_LATERAL, a * sensitivity * BASE_SENSITIVITY / 9.8);
+    return acceleration < 0 ? v : -v;
 };
+const lateral = () => motionInput(accelX);
 let S = 1;            // スケール (canvas幅/360)
 let CUP, WATER;
-const TARGET_COUNT = 800; // 初期水位80%に必要な粒子数
+const TARGET_COUNT = 800;
 const particles = [];
 let initialCount = 1;
+let waterCount = 0;
+const SURFACE_POINTS = 33;
+const surface = Array(SURFACE_POINTS).fill(0);
+const surfaceVelocity = Array(SURFACE_POINTS).fill(0);
+let depthWave = 0, depthVelocity = 0;
+let spillCarry = 0;
 const CUP_TILT_RATIO = 0.04; // ダッシュボード固定: コップはほぼ傾かない
 let shakeX = 0, shakeA = 0, time = 0;
 
@@ -65,7 +74,7 @@ function layout() {
     };
     CUP.k = (CUP.bw - CUP.tw) / CUP.h;
     CUP.L = Math.sqrt(1 + CUP.k * CUP.k);
-    WATER = { r: 5.2 * S, gravity: 0.45 * S };
+    WATER = { r: 5.2 * S, gravity: WATER_GRAVITY * S, lateralForce: 0.45 * S };
     layer.width = Math.ceil(canvas.width * RES);
     layer.height = Math.ceil(canvas.height * RES);
     makeSprite(WATER.r * 3.2 * RES);
@@ -76,31 +85,40 @@ function layout() {
 
 const halfWidth = (y) => CUP.tw + (CUP.bw - CUP.tw) * ((y + CUP.h / 2) / CUP.h);
 
-function spawn(lx, ly) {
+function spawn(lx, ly, vx = 0, vy = 0, incoming = false) {
     const c = Math.cos(CUP.tilt), s = Math.sin(CUP.tilt);
     const x = CUP.x + lx * c - ly * s;
     const y = CUP.y + lx * s + ly * c;
-    particles.push({ x, y, px: x, py: y, inside: true });
+    particles.push({ x, y, px: x - (vx * c - vy * s),
+        py: y - (vx * s + vy * c), incoming, entered: false });
 }
 
-// コップの約6割まで水を満たす
 function fillCup() {
     particles.length = 0;
+    surface.fill(0);
+    surfaceVelocity.fill(0);
+    depthWave = 0;
+    depthVelocity = 0;
+    spillCarry = 0;
     const gap = WATER.r * 1.7;
     const bottom = CUP.h / 2 - WATER.r - CUP.wall;
     const fillTop = CUP.h / 2 - CUP.h * 0.8;
-    for (let y = bottom, row = 0; y > fillTop && particles.length < TARGET_COUNT; y -= gap * 0.9, row++) {
+    let count = 0;
+    for (let y = bottom, row = 0; y > fillTop && count < TARGET_COUNT; y -= gap * 0.9, row++) {
         const hw = halfWidth(y) - WATER.r - CUP.wall;
-        for (let x = -hw + (row % 2) * gap / 2; x <= hw && particles.length < TARGET_COUNT; x += gap) {
-            spawn(x, y);
+        for (let x = -hw + (row % 2) * gap / 2; x <= hw && count < TARGET_COUNT; x += gap) {
+            count++;
         }
     }
-    initialCount = particles.length || 1;
+    initialCount = count || 1;
+    waterCount = count;
 }
 
-// 傾き入力
+// 画面を垂直にしたときの画面左右・上下・画面前後の加速度
 let accelX = 0; // ローパス後の横加速度 (m/s²)
 let rawAccelX = 0;
+let accelY = 0, accelZ = 0;
+let rawAccelY = 0, rawAccelZ = 0;
 let hasPermission = false;
 let permissionPending = false;
 let motionTimeout;
@@ -152,11 +170,16 @@ function handlePermissionGesture(event) {
 
 function handleDeviceMotion(event) {
     const a = event.acceleration;
-    if (!a || a.x === null || a.x === undefined) return;
+    if (!a || ![a.x, a.y, a.z].some(Number.isFinite)) return;
+    const x = Number.isFinite(a.x) ? a.x : 0;
+    const y = Number.isFinite(a.y) ? a.y : 0;
+    const angle = (window.screen?.orientation?.angle ?? window.orientation ?? 0) * Math.PI / 180;
+    rawAccelX = x * Math.cos(angle) + y * Math.sin(angle);
+    rawAccelY = -x * Math.sin(angle) + y * Math.cos(angle);
+    rawAccelZ = Number.isFinite(a.z) ? a.z : 0;
     hasPermission = true;
     clearTimeout(motionTimeout);
     motionPermission.hidden = true;
-    rawAccelX = a.x;
 }
 
 function handleMouseMove(event) {
@@ -171,91 +194,132 @@ let lastMouseX = null;
 
 // タップで水を足す
 canvas.addEventListener('pointerdown', () => {
-    if (particles.length >= initialCount) return;
-    const n = Math.min(60, initialCount - particles.length);
+    const pending = particles.reduce((count, p) => count + (p.incoming ? 1 : 0), 0);
+    const n = Math.min(60, initialCount - waterCount - pending);
     for (let i = 0; i < n; i++) {
-        spawn((Math.random() - 0.5) * CUP.tw, -CUP.h / 2 - Math.random() * 60 * S);
+        spawn((Math.random() - 0.5) * CUP.tw, -CUP.h / 2 - Math.random() * 60 * S, 0, 0, true);
     }
 });
 
-// 物理
-function step(input, settling) {
-    const { r, gravity } = WATER;
-    const rot = CUP.tilt;
-    // 水にかかる重力は端末の傾きに追従 (コップ自体は傾かない)
-    const gx = input * gravity, gy = gravity;
-    const damping = settling ? 0.85 : 0.995;
-    const c = Math.cos(rot), s = Math.sin(rot);
-    const t = CUP.wall / 2;
-
-    for (const p of particles) {
-        const vx = (p.x - p.px) * damping;
-        const vy = (p.y - p.py) * damping;
-        p.px = p.x; p.py = p.y;
-        p.x += vx;
-        p.x += gx;
-        p.y += vy + gy;
+// 各横位置の水深を積分し、波があっても水量と水位を一致させる。
+function waterArea(level) {
+    let area = 0;
+    const dx = 2 * CUP.tw / (SURFACE_POINTS - 1);
+    for (let i = 0; i < SURFACE_POINTS; i++) {
+        const x = -CUP.tw + i * dx;
+        const bottom = Math.abs(x) <= CUP.bw ? CUP.h / 2 :
+            -CUP.h / 2 + (CUP.tw - Math.abs(x)) / (CUP.tw - CUP.bw) * CUP.h;
+        const top = Math.max(-CUP.h / 2, level + surface[i] - x * Math.tan(CUP.tilt));
+        area += Math.max(0, bottom - top) * dx * (i === 0 || i === SURFACE_POINTS - 1 ? 0.5 : 1);
     }
+    return area;
+}
 
-    // 粒子同士の反発 (水の体積と粘り気)
-    const H = r * 2.1;
-    const n = particles.length;
-    for (let i = 0; i < n; i++) {
-        const a = particles[i];
-        for (let j = i + 1; j < n; j++) {
-            const b = particles[j];
-            const dx = b.x - a.x;
-            if (dx > H || dx < -H) continue;
-            const dy = b.y - a.y;
-            const d2 = dx * dx + dy * dy;
-            if (d2 >= H * H || d2 === 0) continue;
-            const d = Math.sqrt(d2);
-            const push = (H - d) * 0.5 * 0.55 / d;
-            a.x -= dx * push; a.y -= dy * push;
-            b.x += dx * push; b.y += dy * push;
-        }
+function waterLevel() {
+    const depth = CUP.h * 0.8;
+    const fullArea = 2 * CUP.bw * depth + (CUP.tw - CUP.bw) * depth * depth / CUP.h;
+    const target = fullArea * waterCount / initialCount;
+    let low = -CUP.h * 2, high = CUP.h;
+    for (let i = 0; i < 30; i++) {
+        const middle = (low + high) / 2;
+        if (waterArea(middle) > target) low = middle;
+        else high = middle;
     }
+    return (low + high) / 2;
+}
 
-    // コップの壁との衝突 (コップのローカル座標系で処理)
-    for (const p of particles) {
-        const rx = p.x - CUP.x, ry = p.y - CUP.y;
-        let lx = rx * c + ry * s;
-        let ly = -rx * s + ry * c;
-        const top = -CUP.h / 2, bot = CUP.h / 2;
-        const gap = r * 1.9 + t; // 水の描画の広がり分も壁から離す
+function updateSurface(input, vertical = 0, depth = 0) {
+    const next = surface.map((height, i) => {
+        const left = surface[Math.max(0, i - 1)];
+        const right = surface[Math.min(SURFACE_POINTS - 1, i + 1)];
+        const x = i * 2 / (SURFACE_POINTS - 1) - 1;
+        const force = (left + right - 2 * height) * 0.12 - height * 0.008 +
+            (input * x * 0.012 + vertical * x * x * 0.008) * CUP.tw;
+        return (surfaceVelocity[i] + force) * 0.96;
+    });
+    const mean = next.reduce((sum, v) => sum + v, 0) / SURFACE_POINTS;
+    for (let i = 0; i < SURFACE_POINTS; i++) {
+        surfaceVelocity[i] = next[i] - mean;
+        surface[i] += surfaceVelocity[i];
+    }
+    depthVelocity = (depthVelocity - depthWave * 0.008 + depth * CUP.tw * 0.012) * 0.96;
+    depthWave += depthVelocity;
+    if (depth === 0 && Math.abs(depthWave) < 0.002 * S &&
+        Math.abs(depthVelocity) < 0.002 * S) {
+        depthWave = 0;
+        depthVelocity = 0;
+    }
+    if (input === 0 && vertical === 0 && surface.every((h, i) =>
+        Math.abs(h) < 0.002 * S && Math.abs(surfaceVelocity[i]) < 0.002 * S)) {
+        surface.fill(0);
+        surfaceVelocity.fill(0);
+    }
+}
 
-        if (p.inside) {
-            if (ly < top) {
-                if (Math.abs(lx) > CUP.tw) p.inside = false; // 縁を越えてこぼれた
-            } else {
-                const sign = lx < 0 ? -1 : 1;
-                const nx = sign / CUP.L, ny = -CUP.k / CUP.L;
-                const pen = (Math.abs(lx) - halfWidth(ly)) / CUP.L + gap;
-                if (pen > 0) { lx -= nx * pen; ly -= ny * pen; }
-                if (ly > bot - gap) ly = bot - gap;
-            }
+function spillWater() {
+    if (waterCount === 0) return;
+    const level = waterLevel();
+    const tilt = Math.tan(CUP.tilt);
+    const leftOverflow = Math.max(0, -CUP.h / 2 - (level + surface[0] + CUP.tw * tilt));
+    const rightOverflow = Math.max(0, -CUP.h / 2 -
+        (level + surface[SURFACE_POINTS - 1] - CUP.tw * tilt));
+    const depthOverflow = Math.max(0, -CUP.h / 2 -
+        (level + surface[Math.floor(SURFACE_POINTS / 2)] - Math.abs(depthWave)));
+    const overflow = leftOverflow + rightOverflow + depthOverflow;
+    if (overflow === 0) {
+        spillCarry = 0;
+        return;
+    }
+    spillCarry += overflow / S * 0.08;
+    const count = Math.min(waterCount, Math.floor(spillCarry), 10);
+    spillCarry -= count;
+    for (let i = 0; i < count; i++) {
+        if (depthOverflow > Math.max(leftOverflow, rightOverflow)) {
+            spawn(0, -CUP.h / 2, 0, -0.5 * S);
+            particles[particles.length - 1].depthSpill = true;
         } else {
-            if (ly < top && Math.abs(lx) < CUP.tw - gap) {
-                p.inside = true; // 口から戻った
-            } else if (ly > top - r && ly < bot + gap) {
-                const hw = halfWidth(Math.max(ly, top)) + gap;
-                if (Math.abs(lx) < hw) {
-                    // 壁の外側にいる粒子は最も近い外面へ押し出す
-                    const toSide = hw - Math.abs(lx);
-                    const toBottom = bot + gap - ly;
-                    if (toBottom < toSide) ly = bot + gap;
-                    else lx = (lx < 0 ? -1 : 1) * hw;
-                }
-            }
+            const side = leftOverflow > rightOverflow ? -1 : 1;
+            spawn(side * (CUP.tw + WATER.r), -CUP.h / 2, side * S, 0);
         }
-
-        p.x = CUP.x + lx * c - ly * s;
-        p.y = CUP.y + lx * s + ly * c;
+        waterCount--;
     }
+}
 
-    // 画面外に落ちた水は消す
+function stepDroplets(input) {
+    if (particles.length === 0) return;
+    const c = Math.cos(CUP.tilt), s = Math.sin(CUP.tilt);
+    const level = waterLevel();
     for (let i = particles.length - 1; i >= 0; i--) {
-        if (particles[i].y > canvas.height + 80 * S) particles.splice(i, 1);
+        const p = particles[i];
+        const oldX = p.x, oldY = p.y;
+        p.x += (p.x - p.px) * 0.99 + input * WATER.lateralForce;
+        p.y += (p.y - p.py) * 0.99 + WATER.gravity;
+        p.px = oldX; p.py = oldY;
+        const rx = p.x - CUP.x, ry = p.y - CUP.y;
+        let lx = rx * c + ry * s, ly = -rx * s + ry * c;
+        const oldLy = -(oldX - CUP.x) * s + (oldY - CUP.y) * c;
+        if (!p.entered && !p.depthSpill && oldLy < -CUP.h / 2 && ly >= -CUP.h / 2 &&
+            Math.abs(lx) < CUP.tw - WATER.r) {
+            p.entered = true;
+        }
+        const index = Math.max(0, Math.min(SURFACE_POINTS - 1,
+            (lx / CUP.tw + 1) * (SURFACE_POINTS - 1) / 2));
+        const lower = Math.floor(index), upper = Math.min(lower + 1, SURFACE_POINTS - 1);
+        const wave = surface[lower] + (surface[upper] - surface[lower]) * (index - lower);
+        if (p.entered && ly >= level + wave - lx * Math.tan(CUP.tilt) &&
+            waterCount < initialCount) {
+            waterCount++;
+            surfaceVelocity[lower] += 0.03 * S;
+            particles.splice(i, 1);
+        } else if (!p.entered && !p.depthSpill && ly >= -CUP.h / 2 &&
+            ly < CUP.h / 2 + WATER.r && Math.abs(lx) < halfWidth(ly) + WATER.r) {
+            lx = (lx < 0 ? -1 : 1) * (halfWidth(ly) + WATER.r);
+            p.x = CUP.x + lx * c - ly * s;
+            p.y = CUP.y + lx * s + ly * c;
+            p.px = p.x;
+        } else if (p.y > canvas.height + 80 * S) {
+            particles.splice(i, 1);
+        }
     }
 }
 
@@ -265,16 +329,41 @@ function update() {
     // ほとんど揺れていない時は揺らさない
     // 入力を平滑化 (ローパス) して手の微振動を抑える
     rawAccelX *= 0.9; // 入力が途絶えたら減衰 (マウス用)
+    rawAccelY *= 0.9;
+    rawAccelZ *= 0.9;
     accelX += (rawAccelX - accelX) * 0.08;
+    accelY += (rawAccelY - accelY) * 0.08;
+    accelZ += (rawAccelZ - accelZ) * 0.08;
     const input = lateral();
+    const vertical = motionInput(accelY);
+    const depth = motionInput(accelZ);
     const mag = Math.min(1, Math.abs(input) * 2);
     shakeX = Math.sin(time * 0.9) * mag * 1.8 * S;
     shakeA = Math.sin(time * 1.3) * mag * 0.006;
     CUP.x = CUP.baseX + shakeX;
     CUP.tilt = input * CUP_TILT_RATIO + shakeA;
-    const settling = Math.abs(input) < 0.05;
-    const sub = 3;
-    for (let i = 0; i < sub; i++) step(input, settling);
+    updateSurface(input, vertical, depth);
+    spillWater();
+    for (let i = 0; i < 3; i++) stepDroplets(input);
+}
+
+const PHYSICS_FRAME_MS = 1000 / 60;
+const MAX_FRAME_MS = 100;
+let lastFrameTime = null;
+let accumulatedTime = 0;
+
+function advancePhysics(timestamp) {
+    if (lastFrameTime === null) {
+        lastFrameTime = timestamp;
+        return;
+    }
+    const elapsed = Math.max(0, Math.min(timestamp - lastFrameTime, MAX_FRAME_MS));
+    lastFrameTime = timestamp;
+    accumulatedTime += elapsed;
+    while (accumulatedTime + 1e-7 >= PHYSICS_FRAME_MS) {
+        update();
+        accumulatedTime -= PHYSICS_FRAME_MS;
+    }
 }
 
 // 描画
@@ -329,6 +418,57 @@ function drawCupBack() {
 }
 
 function drawWater() {
+    if (waterCount > 0) {
+        const level = waterLevel();
+        const tilt = Math.tan(CUP.tilt);
+        const span = Math.max(0, halfWidth(Math.max(-CUP.h / 2, Math.min(CUP.h / 2, level))));
+        ctx.save();
+        ctx.translate(CUP.x, CUP.y);
+        ctx.rotate(CUP.tilt);
+        cupPath(CUP.wall / 2);
+        ctx.clip();
+        ctx.beginPath();
+        for (let i = 0; i < SURFACE_POINTS; i++) {
+            const x = -CUP.tw + 2 * CUP.tw * i / (SURFACE_POINTS - 1);
+            const arc = Math.sqrt(Math.max(0, 1 - (x / span) ** 2));
+            const y = level + surface[i] - x * tilt + depthWave * arc;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.lineTo(CUP.tw, CUP.h / 2);
+        ctx.lineTo(-CUP.tw, CUP.h / 2);
+        ctx.closePath();
+        const water = ctx.createLinearGradient(0, -CUP.h / 2, 0, CUP.h / 2);
+        water.addColorStop(0, 'rgba(80,185,245,0.9)');
+        water.addColorStop(1, 'rgba(30,115,215,0.9)');
+        ctx.fillStyle = water;
+        ctx.fill();
+        ctx.beginPath();
+        for (let i = 0; i < SURFACE_POINTS; i++) {
+            const x = -span + 2 * span * i / (SURFACE_POINTS - 1);
+            const index = (x / CUP.tw + 1) * (SURFACE_POINTS - 1) / 2;
+            const lower = Math.floor(index), upper = Math.min(lower + 1, SURFACE_POINTS - 1);
+            const wave = surface[lower] + (surface[upper] - surface[lower]) * (index - lower);
+            const arc = Math.sqrt(Math.max(0, 1 - (x / span) ** 2));
+            const y = level + wave - x * tilt - (span * RIM_RATIO * 0.45 + depthWave) * arc;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        for (let i = SURFACE_POINTS - 1; i >= 0; i--) {
+            const x = -span + 2 * span * i / (SURFACE_POINTS - 1);
+            const index = (x / CUP.tw + 1) * (SURFACE_POINTS - 1) / 2;
+            const lower = Math.floor(index), upper = Math.min(lower + 1, SURFACE_POINTS - 1);
+            const wave = surface[lower] + (surface[upper] - surface[lower]) * (index - lower);
+            const arc = Math.sqrt(Math.max(0, 1 - (x / span) ** 2));
+            ctx.lineTo(x, level + wave - x * tilt + depthWave * arc);
+        }
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(95, 190, 245, 0.85)';
+        ctx.fill();
+        ctx.restore();
+    }
+
+    if (particles.length === 0) return;
     const w = layer.width, h = layer.height;
     lctx.clearRect(0, 0, w, h);
     const half = sprite.width / 2;
@@ -391,18 +531,16 @@ function drawCupFront() {
     ctx.restore();
 }
 
-function animate() {
+function animate(timestamp) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    update();
+    advancePhysics(timestamp);
     drawShadow();
     drawCupBack();
     drawWater();
     drawCupFront();
 
-    const angle = accelX.toFixed(1);
-    const inside = particles.reduce((n, p) => n + (p.inside ? 1 : 0), 0);
-    const pct = Math.min(100, Math.round(inside / initialCount * 100));
-    info.textContent = `Accel: ${angle} m/s²`;
+    const pct = Math.min(100, Math.round(waterCount / initialCount * 100));
+    info.textContent = `加速度（左右 / 上下 / 前後）: ${accelX.toFixed(1)} / ${accelY.toFixed(1)} / ${accelZ.toFixed(1)} m/s²`;
     waterPercent.textContent = `水の残量: ${pct}%`;
     requestAnimationFrame(animate);
 }
@@ -422,7 +560,7 @@ window.addEventListener('resize', layout);
 
 window.addEventListener('load', () => {
     layout();
-    animate();
+    requestAnimationFrame(animate);
     if (!requiresMotionPermission) {
         requestPermission();
     }
