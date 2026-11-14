@@ -70,6 +70,7 @@ function layout() {
         bw: 52 * S,      // 底の半幅
         wall: 4 * S,
         tilt: 0,
+        waterTilt: 0,
         prevTilt: 0
     };
     CUP.k = (CUP.bw - CUP.tw) / CUP.h;
@@ -119,6 +120,8 @@ let accelX = 0; // ローパス後の横加速度 (m/s²)
 let rawAccelX = 0;
 let accelY = 0, accelZ = 0;
 let rawAccelY = 0, rawAccelZ = 0;
+let rawGravityTilt = 0, gravityTilt = 0;
+let rawGravityDepth = 0, gravityDepth = 0;
 let hasPermission = false;
 let permissionPending = false;
 let motionTimeout;
@@ -170,13 +173,25 @@ function handlePermissionGesture(event) {
 
 function handleDeviceMotion(event) {
     const a = event.acceleration;
-    if (!a || ![a.x, a.y, a.z].some(Number.isFinite)) return;
-    const x = Number.isFinite(a.x) ? a.x : 0;
-    const y = Number.isFinite(a.y) ? a.y : 0;
+    const g = event.accelerationIncludingGravity;
+    if ((!a || ![a.x, a.y, a.z].some(Number.isFinite)) &&
+        (!g || ![g.x, g.y, g.z].some(Number.isFinite))) return;
+    const x = a && Number.isFinite(a.x) ? a.x : 0;
+    const y = a && Number.isFinite(a.y) ? a.y : 0;
     const angle = (window.screen?.orientation?.angle ?? window.orientation ?? 0) * Math.PI / 180;
     rawAccelX = x * Math.cos(angle) + y * Math.sin(angle);
     rawAccelY = -x * Math.sin(angle) + y * Math.cos(angle);
-    rawAccelZ = Number.isFinite(a.z) ? a.z : 0;
+    rawAccelZ = a && Number.isFinite(a.z) ? a.z : 0;
+    if (g && Number.isFinite(g.x) && Number.isFinite(g.y)) {
+        const gx = g.x * Math.cos(angle) + g.y * Math.sin(angle);
+        const gy = -g.x * Math.sin(angle) + g.y * Math.cos(angle);
+        rawGravityTilt = Math.atan2(-gx, gy);
+    }
+    if (g && Number.isFinite(g.y) && Number.isFinite(g.z)) {
+        const gx = Number.isFinite(g.x) ? g.x : 0;
+        const gy = -gx * Math.sin(angle) + g.y * Math.cos(angle);
+        rawGravityDepth = Math.atan2(g.z, gy);
+    }
     hasPermission = true;
     clearTimeout(motionTimeout);
     motionPermission.hidden = true;
@@ -205,11 +220,12 @@ canvas.addEventListener('pointerdown', () => {
 function waterArea(level) {
     let area = 0;
     const dx = 2 * CUP.tw / (SURFACE_POINTS - 1);
+    const tilt = Math.tan(CUP.waterTilt);
     for (let i = 0; i < SURFACE_POINTS; i++) {
         const x = -CUP.tw + i * dx;
         const bottom = Math.abs(x) <= CUP.bw ? CUP.h / 2 :
             -CUP.h / 2 + (CUP.tw - Math.abs(x)) / (CUP.tw - CUP.bw) * CUP.h;
-        const top = Math.max(-CUP.h / 2, level + surface[i] - x * Math.tan(CUP.tilt));
+        const top = Math.max(-CUP.h / 2, level + surface[i] - x * tilt);
         area += Math.max(0, bottom - top) * dx * (i === 0 || i === SURFACE_POINTS - 1 ? 0.5 : 1);
     }
     return area;
@@ -259,7 +275,7 @@ function updateSurface(input, vertical = 0, depth = 0) {
 function spillWater() {
     if (waterCount === 0) return;
     const level = waterLevel();
-    const tilt = Math.tan(CUP.tilt);
+    const tilt = Math.tan(CUP.waterTilt);
     const leftOverflow = Math.max(0, -CUP.h / 2 - (level + surface[0] + CUP.tw * tilt));
     const rightOverflow = Math.max(0, -CUP.h / 2 -
         (level + surface[SURFACE_POINTS - 1] - CUP.tw * tilt));
@@ -306,7 +322,7 @@ function stepDroplets(input) {
             (lx / CUP.tw + 1) * (SURFACE_POINTS - 1) / 2));
         const lower = Math.floor(index), upper = Math.min(lower + 1, SURFACE_POINTS - 1);
         const wave = surface[lower] + (surface[upper] - surface[lower]) * (index - lower);
-        if (p.entered && ly >= level + wave - lx * Math.tan(CUP.tilt) &&
+        if (p.entered && ly >= level + wave - lx * Math.tan(CUP.waterTilt) &&
             waterCount < initialCount) {
             waterCount++;
             surfaceVelocity[lower] += 0.03 * S;
@@ -334,14 +350,26 @@ function update() {
     accelX += (rawAccelX - accelX) * 0.08;
     accelY += (rawAccelY - accelY) * 0.08;
     accelZ += (rawAccelZ - accelZ) * 0.08;
+    const gravityTiltDelta = Math.atan2(
+        Math.sin(rawGravityTilt - gravityTilt),
+        Math.cos(rawGravityTilt - gravityTilt)
+    );
+    gravityTilt += gravityTiltDelta * 0.08;
+    const gravityDepthDelta = Math.atan2(
+        Math.sin(rawGravityDepth - gravityDepth),
+        Math.cos(rawGravityDepth - gravityDepth)
+    );
+    gravityDepth += gravityDepthDelta * 0.08;
     const input = lateral();
     const vertical = motionInput(accelY);
-    const depth = motionInput(accelZ);
+    const depth = Math.max(-MAX_LATERAL,
+        Math.min(MAX_LATERAL, motionInput(accelZ) + Math.sin(gravityDepth)));
     const mag = Math.min(1, Math.abs(input) * 2);
     shakeX = Math.sin(time * 0.9) * mag * 1.8 * S;
     shakeA = Math.sin(time * 1.3) * mag * 0.006;
     CUP.x = CUP.baseX + shakeX;
     CUP.tilt = input * CUP_TILT_RATIO + shakeA;
+    CUP.waterTilt = gravityTilt + CUP.tilt;
     updateSurface(input, vertical, depth);
     spillWater();
     for (let i = 0; i < 3; i++) stepDroplets(input);
@@ -420,7 +448,7 @@ function drawCupBack() {
 function drawWater() {
     if (waterCount > 0) {
         const level = waterLevel();
-        const tilt = Math.tan(CUP.tilt);
+        const tilt = Math.tan(CUP.waterTilt);
         const span = Math.max(0, halfWidth(Math.max(-CUP.h / 2, Math.min(CUP.h / 2, level))));
         ctx.save();
         ctx.translate(CUP.x, CUP.y);

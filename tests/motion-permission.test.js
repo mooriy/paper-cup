@@ -55,6 +55,8 @@ function createApp(requestPermission) {
         element,
         acceleration() { return runInNewContext("rawAccelX", context); },
         axes() { return runInNewContext("[rawAccelX, rawAccelY, rawAccelZ]", context); },
+        rawTilt() { return runInNewContext("rawGravityTilt", context); },
+        rawDepth() { return runInNewContext("rawGravityDepth", context); },
         setOrientation(angle) { window.screen = { orientation: { angle } }; },
         dispatch(type, event) {
             for (const handler of [...(listeners.get(type) || [])]) handler(event);
@@ -104,6 +106,25 @@ Deno.test("screen-relative axes follow orientation and accept partial sensor dat
     assert.equal(z, 4);
     app.dispatch("devicemotion", { acceleration: { x: null, y: null, z: 5 } });
     assert.deepEqual(Array.from(app.axes()), [0, 0, 5]);
+});
+
+Deno.test("gravity sensor detects static tilt and follows screen orientation", async () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.clickButton();
+    await flush();
+    app.dispatch("devicemotion", {
+        acceleration: null,
+        accelerationIncludingGravity: { x: -4, y: 8, z: 4 },
+    });
+    assert.ok(Math.abs(app.rawTilt() - Math.atan2(4, 8)) < 1e-10);
+    assert.ok(Math.abs(app.rawDepth() - Math.atan2(4, 8)) < 1e-10);
+    app.setOrientation(90);
+    app.dispatch("devicemotion", {
+        acceleration: null,
+        accelerationIncludingGravity: { x: -4, y: 8, z: 4 },
+    });
+    assert.ok(Math.abs(app.rawTilt() - Math.atan2(-8, 4)) < 1e-10);
+    assert.ok(Math.abs(app.rawDepth() - Math.atan2(4, 4)) < 1e-10);
 });
 
 Deno.test("reports missing sensor data after permission is granted", async () => {

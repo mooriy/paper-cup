@@ -24,7 +24,7 @@ function createSimulation() {
         S = 1;
         canvas.height = 844;
         CUP = { baseX: 195, x: 195, y: 200, h: 170, tw: 78, bw: 52,
-                wall: 4, tilt: 0, prevTilt: 0 };
+                wall: 4, tilt: 0, waterTilt: 0, prevTilt: 0 };
         CUP.k = (CUP.bw - CUP.tw) / CUP.h;
         CUP.L = Math.sqrt(1 + CUP.k * CUP.k);
         WATER = { r: 5.2, gravity: WATER_GRAVITY, lateralForce: 0.45 };
@@ -119,6 +119,26 @@ Deno.test("device acceleration drives each axis through the normal update loop",
             assert.equal(run("depthWave"), 0);
         }
     }
+});
+
+Deno.test("static gravity tilt sets the water plane without rotating the cup", () => {
+    const { run } = createSimulation();
+    run(`rawGravityTilt = 0.3;
+        for (let i = 0; i < 100; i++) update();`);
+    assert.ok(Math.abs(run("CUP.waterTilt - 0.3")) < 0.001);
+    assert.equal(run("CUP.tilt"), 0);
+    assert.ok(Math.abs(run("surface.at(-1) - surface[0]")) < 1e-10);
+    assert.ok(Math.abs(run(`waterArea(waterLevel()) -
+        (2 * CUP.bw * CUP.h * 0.8 +
+        (CUP.tw - CUP.bw) * CUP.h * 0.8 ** 2) * waterCount / initialCount`)) < 0.001);
+});
+
+Deno.test("static front-back tilt creates a persistent depth response", () => {
+    const { run } = createSimulation();
+    run(`rawGravityDepth = 0.3;
+        for (let i = 0; i < 100; i++) update();`);
+    assert.ok(run("Math.abs(depthWave) > 1"));
+    assert.equal(run("surface.every(h => h === 0)"), true);
 });
 
 Deno.test("depth overflow creates droplets and preserves water accounting", () => {
