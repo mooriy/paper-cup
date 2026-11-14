@@ -13,7 +13,15 @@ sensitivityInput.addEventListener('input', () => {
     sensitivity = parseFloat(sensitivityInput.value);
     sensitivityValue.textContent = sensitivity.toFixed(1) + 'x';
 });
-const effTilt = () => Math.max(-1.4, Math.min(1.4, deviceTilt * sensitivity));
+const MAX_LATERAL = 0.8;  // 重力に対する横加速度の上限比
+const ACCEL_DEADZONE = 1.5; // m/s² 未満 (手持ちの微振動) は無視
+// 横加速度 (m/s²) から重力に対する横方向の割合を求める
+const lateral = () => {
+    const a = Math.abs(accelX) - ACCEL_DEADZONE;
+    if (a <= 0) return 0;
+    const v = Math.min(MAX_LATERAL, a * sensitivity / 9.8);
+    return accelX < 0 ? v : -v; // 端末が右へ加速すると水は左へ偏る
+};
 let S = 1;            // スケール (canvas幅/360)
 let CUP, WATER;
 const TARGET_COUNT = 800; // 初期水位80%に必要な粒子数
@@ -91,7 +99,8 @@ function fillCup() {
 }
 
 // 傾き入力
-let deviceTilt = 0;
+let accelX = 0; // ローパス後の横加速度 (m/s²)
+let rawAccelX = 0;
 let hasPermission = false;
 let listening = false;
 
@@ -101,17 +110,17 @@ function enableInputs() {
 
 async function requestPermission() {
     try {
-        if (typeof DeviceOrientationEvent !== 'undefined' &&
-            typeof DeviceOrientationEvent.requestPermission === 'function') {
-            const permission = await DeviceOrientationEvent.requestPermission();
+        if (typeof DeviceMotionEvent !== 'undefined' &&
+            typeof DeviceMotionEvent.requestPermission === 'function') {
+            const permission = await DeviceMotionEvent.requestPermission();
             if (permission === 'granted') {
                 hasPermission = true;
-                window.addEventListener('deviceorientation', handleDeviceOrientation);
+                window.addEventListener('devicemotion', handleDeviceMotion);
             } else {
                 window.addEventListener('mousemove', handleMouseMove);
             }
         } else {
-            window.addEventListener('deviceorientation', handleDeviceOrientation);
+            window.addEventListener('devicemotion', handleDeviceMotion);
             window.addEventListener('mousemove', handleMouseMove);
         }
     } catch (e) {
@@ -120,18 +129,22 @@ async function requestPermission() {
     enableInputs();
 }
 
-function handleDeviceOrientation(event) {
-    if (event.gamma === null || event.gamma === undefined) return;
+function handleDeviceMotion(event) {
+    const a = event.acceleration;
+    if (!a || a.x === null || a.x === undefined) return;
     hasPermission = true;
-    deviceTilt = event.gamma * Math.PI / 180;
+    rawAccelX = a.x;
 }
 
 function handleMouseMove(event) {
     if (hasPermission) return;
     const rect = canvas.getBoundingClientRect();
-    const t = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
-    deviceTilt = Math.max(-1, Math.min(1, t)) * 1.5;
+    const x = (event.clientX - rect.left) / rect.width;
+    // マウスの速度を加速度の代わりに使う
+    if (lastMouseX !== null) rawAccelX = (x - lastMouseX) * 300;
+    lastMouseX = x;
 }
+let lastMouseX = null;
 
 // タップで水を足す
 canvas.addEventListener('pointerdown', () => {
@@ -147,7 +160,7 @@ function step() {
     const { r, gravity } = WATER;
     const rot = CUP.tilt;
     // 水にかかる重力は端末の傾きに追従 (コップ自体は傾かない)
-    const gx = Math.sin(effTilt()) * gravity, gy = Math.cos(effTilt()) * gravity;
+    const gx = lateral() * gravity, gy = gravity;
     const c = Math.cos(rot), s = Math.sin(rot);
     const t = CUP.wall / 2;
 
@@ -226,11 +239,14 @@ function update() {
     CUP.prevTilt = CUP.tilt;
     time += 1;
     // ほとんど揺れていない時は揺らさない
-    const mag = Math.max(0, Math.min(1, (Math.abs(effTilt()) - 0.05) * 2));
+    // 入力を平滑化 (ローパス) して手の微振動を抑える
+    rawAccelX *= 0.9; // 入力が途絶えたら減衰 (マウス用)
+    accelX += (rawAccelX - accelX) * 0.08;
+    const mag = Math.min(1, Math.abs(lateral()) * 2);
     shakeX = Math.sin(time * 0.9) * mag * 1.8 * S;
     shakeA = Math.sin(time * 1.3) * mag * 0.006;
     CUP.x = CUP.baseX + shakeX;
-    CUP.tilt = effTilt() * CUP_TILT_RATIO + shakeA;
+    CUP.tilt = lateral() * CUP_TILT_RATIO + shakeA;
     const sub = 3;
     for (let i = 0; i < sub; i++) step();
 }
@@ -358,10 +374,10 @@ function animate() {
     drawWater();
     drawCupFront();
 
-    const angle = (deviceTilt * 180 / Math.PI).toFixed(1);
+    const angle = accelX.toFixed(1);
     const inside = particles.reduce((n, p) => n + (p.inside ? 1 : 0), 0);
     const pct = Math.min(100, Math.round(inside / initialCount * 100));
-    info.textContent = `Angle: ${angle}°`;
+    info.textContent = `Accel: ${angle} m/s²`;
     waterPercent.textContent = `水の残量: ${pct}%`;
     requestAnimationFrame(animate);
 }
@@ -377,8 +393,8 @@ window.addEventListener('resize', layout);
 window.addEventListener('load', () => {
     layout();
     animate();
-    if (!(typeof DeviceOrientationEvent !== 'undefined' &&
-          typeof DeviceOrientationEvent.requestPermission === 'function')) {
+    if (!(typeof DeviceMotionEvent !== 'undefined' &&
+          typeof DeviceMotionEvent.requestPermission === 'function')) {
         requestPermission();
     }
 });
