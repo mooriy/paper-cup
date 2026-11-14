@@ -60,6 +60,17 @@
             display: block;
         }
 
+        .status {
+            margin-top: 12px;
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            z-index: 10;
+        }
+
         .controls {
             margin-top: 20px;
             color: white;
@@ -174,6 +185,10 @@
             <p>iPhone を傾けて水の動きを楽しむ</p>
         </div>
         <canvas id="canvas"></canvas>
+        <div class="status">
+            <span id="waterPercent">水の残量: 100%</span>
+            <button class="btn-primary" id="resetBtn">リセット</button>
+        </div>
         <div class="controls">
             <p>💡 iPhone/iPad を傾けてコップを動かしてください<br>
             デスクトップ: マウスで傾きを操作 / タップで水を注ぎ足す</p>

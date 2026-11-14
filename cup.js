@@ -2,11 +2,15 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const info = document.getElementById('info');
+const waterPercent = document.getElementById('waterPercent');
 
 let S = 1;            // スケール (canvas幅/360)
 let CUP, WATER;
 const TARGET_COUNT = 320;
 const particles = [];
+let initialCount = 1;
+const CUP_TILT_RATIO = 0.04; // ダッシュボード固定: コップはほぼ傾かない
+let shakeX = 0, shakeA = 0, time = 0;
 
 // 水を描画する低解像度レイヤー (メタボール合成用)
 const RES = 0.5;
@@ -39,6 +43,7 @@ function layout() {
     S = canvas.width / 360;
     const h = 170 * S;
     CUP = {
+        baseX: canvas.width / 2,
         x: canvas.width / 2,
         y: canvas.height * 0.45,
         h,
@@ -78,6 +83,7 @@ function fillCup() {
             spawn(x, y);
         }
     }
+    initialCount = particles.length || 1;
 }
 
 // 傾き入力
@@ -125,8 +131,8 @@ function handleMouseMove(event) {
 
 // タップで水を足す
 canvas.addEventListener('pointerdown', () => {
-    if (particles.length >= TARGET_COUNT) return;
-    const n = Math.min(60, TARGET_COUNT - particles.length);
+    if (particles.length >= initialCount) return;
+    const n = Math.min(60, initialCount - particles.length);
     for (let i = 0; i < n; i++) {
         spawn((Math.random() - 0.5) * CUP.tw, -CUP.h / 2 - Math.random() * 60 * S);
     }
@@ -136,6 +142,8 @@ canvas.addEventListener('pointerdown', () => {
 function step() {
     const { r, gravity } = WATER;
     const rot = CUP.tilt;
+    // 水にかかる重力は端末の傾きに追従 (コップ自体は傾かない)
+    const gx = Math.sin(deviceTilt) * gravity, gy = Math.cos(deviceTilt) * gravity;
     const c = Math.cos(rot), s = Math.sin(rot);
     const t = CUP.wall / 2;
 
@@ -144,7 +152,8 @@ function step() {
         const vy = (p.y - p.py) * 0.995;
         p.px = p.x; p.py = p.y;
         p.x += vx;
-        p.y += vy + gravity;
+        p.x += gx;
+        p.y += vy + gy;
     }
 
     // 粒子同士の反発 (水の体積と粘り気)
@@ -211,7 +220,12 @@ function step() {
 
 function update() {
     CUP.prevTilt = CUP.tilt;
-    CUP.tilt += (deviceTilt - CUP.tilt) * 0.18;
+    time += 1;
+    const mag = Math.min(1, Math.abs(deviceTilt) * 2);
+    shakeX = Math.sin(time * 0.9) * (0.6 + mag * 1.2) * S;
+    shakeA = Math.sin(time * 1.3) * (0.002 + mag * 0.004);
+    CUP.x = CUP.baseX + shakeX;
+    CUP.tilt = deviceTilt * CUP_TILT_RATIO + shakeA;
     const sub = 3;
     for (let i = 0; i < sub; i++) step();
 }
@@ -362,8 +376,11 @@ function animate() {
     drawWater();
     drawCupFront();
 
-    const angle = (CUP.tilt * 180 / Math.PI).toFixed(1);
-    info.textContent = `Angle: ${angle}° | Water: ${particles.length}`;
+    const angle = (deviceTilt * 180 / Math.PI).toFixed(1);
+    const inside = particles.reduce((n, p) => n + (p.inside ? 1 : 0), 0);
+    const pct = Math.min(100, Math.round(inside / initialCount * 100));
+    info.textContent = `Angle: ${angle}°`;
+    waterPercent.textContent = `水の残量: ${pct}%`;
     requestAnimationFrame(animate);
 }
 
@@ -372,6 +389,7 @@ document.getElementById('permissionDeny').addEventListener('click', () => {
     window.addEventListener('mousemove', handleMouseMove);
     enableInputs();
 });
+document.getElementById('resetBtn').addEventListener('click', fillCup);
 window.addEventListener('resize', layout);
 
 window.addEventListener('load', () => {
