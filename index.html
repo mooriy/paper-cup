@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>紙コップ水シミュレーター - Initial D Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100%;
+            height: 100vh;
+            overflow: hidden;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            touch-action: none;
+        }
+
+        .container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 20px;
+            z-index: 10;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        #canvas {
+            border: 3px solid white;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 100%;
+            max-height: 70vh;
+            display: block;
+        }
+
+        .controls {
+            margin-top: 20px;
+            color: white;
+            text-align: center;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .permission-prompt {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .permission-prompt.hidden {
+            display: none;
+        }
+
+        .permission-content {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 300px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .permission-content h2 {
+            margin-bottom: 15px;
+            color: #333;
+            font-size: 18px;
+        }
+
+        .permission-content p {
+            margin-bottom: 20px;
+            color: #666;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:active {
+            transform: scale(0.95);
+            opacity: 0.8;
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:active {
+            transform: scale(0.95);
+            opacity: 0.8;
+        }
+
+        .info {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            font-size: 10px;
+            opacity: 0.7;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div class="permission-prompt" id="permissionPrompt">
+        <div class="permission-content">
+            <h2>🏎️ イニシャルD</h2>
+            <p>デバイスの傾きを検出するために、モーションセンサーへのアクセスを許可してください。</p>
+            <div class="button-group">
+                <button class="btn-primary" id="permissionAllow">許可する</button>
+                <button class="btn-secondary" id="permissionDeny">キャンセル</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🏎️ 紙コップ水シミュレーター</h1>
+            <p>iPhone を傾けて水の動きを楽しむ</p>
+        </div>
+        <canvas id="canvas"></canvas>
+        <div class="controls">
+            <p>💡 iPhone/iPad を傾けてコップを動かしてください<br>
+            デスクトップ: マウスで傾きを操作</p>
+        </div>
+    </div>
+
+    <div class="info" id="info">
+        Angle: 0°
+    </div>
+
+    <script>
+        // Canvas Setup
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size based on device
+        function resizeCanvas() {
+            const maxWidth = Math.min(window.innerWidth - 40, 600);
+            const maxHeight = Math.min(window.innerHeight * 0.7, 800);
+            const aspectRatio = 0.6;
+            
+            if (maxWidth / maxHeight > 1 / aspectRatio) {
+                canvas.height = maxHeight;
+                canvas.width = maxHeight * aspectRatio;
+            } else {
+                canvas.width = maxWidth;
+                canvas.height = maxWidth / aspectRatio;
+            }
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Physics Parameters
+        const CUP = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: Math.min(canvas.width, canvas.height) * 0.15,
+            tilt: 0,
+            thickness: 3
+        };
+
+        const WATER = {
+            particles: [],
+            gravity: 0.3,
+            damping: 0.98,
+            friction: 0.02,
+            maxParticles: 150,
+            minParticles: 80
+        };
+
+        // Initialize water particles
+        function initWater() {
+            WATER.particles = [];
+            const particleCount = 120;
+            for (let i = 0; i < particleCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.random() * CUP.radius * 0.7;
+                WATER.particles.push({
+                    x: CUP.x + Math.cos(angle) * dist,
+                    y: CUP.y + Math.sin(angle) * dist,
+                    vx: (Math.random() - 0.5) * 2,
+                    vy: (Math.random() - 0.5) * 2,
+                    size: Math.random() * 1.5 + 0.5
+                });
+            }
+        }
+
+        // Device orientation handling
+        let deviceTilt = 0;
+        let hasPermission = false;
+
+        async function requestPermission() {
+            try {
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        hasPermission = true;
+                        window.addEventListener('deviceorientation', handleDeviceOrientation);
+                        document.getElementById('permissionPrompt').classList.add('hidden');
+                    }
+                } else {
+                    // Non-iOS or older devices
+                    hasPermission = true;
+                    window.addEventListener('deviceorientation', handleDeviceOrientation);
+                    window.addEventListener('mousemove', handleMouseMove);
+                    document.getElementById('permissionPrompt').classList.add('hidden');
+                }
+            } catch (error) {
+                console.error('Permission denied:', error);
+                // Allow mouse control as fallback
+                window.addEventListener('mousemove', handleMouseMove);
+                document.getElementById('permissionPrompt').classList.add('hidden');
+            }
+        }
+
+        function handleDeviceOrientation(event) {
+            // Beta: -180 to 180 (rotation around X axis)
+            // Gamma: -90 to 90 (rotation around Y axis)
+            const beta = event.beta || 0;
+            const gamma = event.gamma || 0;
+            
+            // Use gamma for left-right tilt
+            deviceTilt = gamma * Math.PI / 180;
+        }
+
+        function handleMouseMove(event) {
+            if (hasPermission) return;
+            const x = event.clientX - canvas.getBoundingClientRect().left;
+            const centerX = canvas.width / 2;
+            const tiltFactor = (x - centerX) / (canvas.width / 2);
+            deviceTilt = Math.max(-0.5, Math.min(0.5, tiltFactor * 0.5));
+        }
+
+        // Update water physics
+        function updateWater() {
+            const particles = WATER.particles;
+            
+            for (let particle of particles) {
+                // Apply gravity with tilt consideration
+                const gravityX = Math.sin(CUP.tilt) * WATER.gravity;
+                const gravityY = Math.cos(CUP.tilt) * WATER.gravity;
+                
+                particle.vx += gravityX;
+                particle.vy += gravityY;
+                
+                // Apply damping
+                particle.vx *= WATER.damping;
+                particle.vy *= WATER.damping;
+                
+                // Update position
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+                
+                // Boundary collision - Cup walls
+                const dx = particle.x - CUP.x;
+                const dy = particle.y - CUP.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > CUP.radius - 2) {
+                    // Collision with cup wall
+                    const angle = Math.atan2(dy, dx);
+                    particle.x = CUP.x + Math.cos(angle) * (CUP.radius - 2);
+                    particle.y = CUP.y + Math.sin(angle) * (CUP.radius - 2);
+                    
+                    // Reflect velocity
+                    const velocityDist = Math.sqrt(particle.vx * particle.vx + particle.vy * particle.vy);
+                    particle.vx = Math.cos(angle) * velocityDist * -0.7;
+                    particle.vy = Math.sin(angle) * velocityDist * -0.7;
+                    
+                    // Apply friction
+                    particle.vx *= (1 - WATER.friction);
+                    particle.vy *= (1 - WATER.friction);
+                }
+                
+                // Keep particles in cup
+                if (dist > CUP.radius) {
+                    const angle = Math.atan2(dy, dx);
+                    particle.x = CUP.x + Math.cos(angle) * (CUP.radius - 3);
+                    particle.y = CUP.y + Math.sin(angle) * (CUP.radius - 3);
+                }
+            }
+            
+            // Maintain particle count
+            if (particles.length < WATER.minParticles) {
+                for (let i = particles.length; i < WATER.minParticles; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = Math.random() * CUP.radius * 0.6;
+                    particles.push({
+                        x: CUP.x + Math.cos(angle) * dist,
+                        y: CUP.y + Math.sin(angle) * dist,
+                        vx: (Math.random() - 0.5) * 2,
+                        vy: (Math.random() - 0.5) * 2,
+                        size: Math.random() * 1.5 + 0.5
+                    });
+                }
+            } else if (particles.length > WATER.maxParticles) {
+                WATER.particles = particles.slice(0, WATER.maxParticles);
+            }
+        }
+
+        // Smooth tilt transition
+        function updateTilt() {
+            CUP.tilt += (deviceTilt - CUP.tilt) * 0.1;
+        }
+
+        // Drawing functions
+        function drawCup() {
+            ctx.save();
+            ctx.translate(CUP.x, CUP.y);
+            ctx.rotate(CUP.tilt);
+            
+            // Cup outline
+            ctx.strokeStyle = '#8b7355';
+            ctx.lineWidth = CUP.thickness;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, CUP.radius, CUP.radius * 0.8, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Cup top rim
+            ctx.strokeStyle = '#a0826d';
+            ctx.lineWidth = CUP.thickness + 1;
+            ctx.beginPath();
+            ctx.ellipse(0, -CUP.radius * 0.8, CUP.radius * 0.95, CUP.radius * 0.3, 0, 0, Math.PI);
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+
+        function drawWater() {
+            ctx.fillStyle = '#4db8ff';
+            ctx.globalAlpha = 0.6;
+            
+            for (let particle of WATER.particles) {
+                ctx.beginPath();
+                ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            ctx.globalAlpha = 1;
+        }
+
+        function drawSurface() {
+            // Draw water surface line
+            ctx.strokeStyle = '#2196f3';
+            ctx.lineWidth = 1;
+            ctx.globalAlpha = 0.3;
+            
+            ctx.save();
+            ctx.translate(CUP.x, CUP.y);
+            ctx.rotate(CUP.tilt);
+            
+            ctx.beginPath();
+            ctx.ellipse(0, -5, CUP.radius * 0.85, CUP.radius * 0.3, 0, 0, Math.PI);
+            ctx.stroke();
+            
+            ctx.restore();
+            ctx.globalAlpha = 1;
+        }
+
+        // Animation loop
+        function animate() {
+            // Clear canvas
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Update physics
+            updateTilt();
+            updateWater();
+            
+            // Draw everything
+            drawWater();
+            drawCup();
+            drawSurface();
+            
+            // Update info
+            const angle = (CUP.tilt * 180 / Math.PI).toFixed(1);
+            document.getElementById('info').textContent = `Angle: ${angle}° | Particles: ${WATER.particles.length}`;
+            
+            requestAnimationFrame(animate);
+        }
+
+        // Event listeners
+        document.getElementById('permissionAllow').addEventListener('click', requestPermission);
+        document.getElementById('permissionDeny').addEventListener('click', () => {
+            document.getElementById('permissionPrompt').classList.add('hidden');
+            window.addEventListener('mousemove', handleMouseMove);
+        });
+
+        // Start
+        window.addEventListener('load', () => {
+            initWater();
+            animate();
+            
+            // Check if we need to request permission
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                // iOS 13+
+                // Permission prompt already shown
+            } else {
+                // Non-iOS or older
+                requestPermission();
+            }
+        });
+    </script>
+</body>
+</html>
