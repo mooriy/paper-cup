@@ -104,10 +104,6 @@ let rawAccelX = 0;
 let hasPermission = false;
 let listening = false;
 
-function enableInputs() {
-    document.getElementById('permissionPrompt').classList.add('hidden');
-}
-
 async function requestPermission() {
     try {
         if (typeof DeviceMotionEvent !== 'undefined' &&
@@ -126,7 +122,6 @@ async function requestPermission() {
     } catch (e) {
         window.addEventListener('mousemove', handleMouseMove);
     }
-    enableInputs();
 }
 
 function handleDeviceMotion(event) {
@@ -164,8 +159,9 @@ function step() {
     const c = Math.cos(rot), s = Math.sin(rot);
     const t = CUP.wall / 2;
 
+    const calm = gx === 0;
     for (const p of particles) {
-        const vx = (p.x - p.px) * 0.995;
+        const vx = calm ? 0 : (p.x - p.px) * 0.995; // 揺れがない時は横に流れない
         const vy = (p.y - p.py) * 0.995;
         p.px = p.x; p.py = p.y;
         p.x += vx;
@@ -382,11 +378,11 @@ function animate() {
     requestAnimationFrame(animate);
 }
 
-document.getElementById('permissionAllow').addEventListener('click', requestPermission);
-document.getElementById('permissionDeny').addEventListener('click', () => {
-    window.addEventListener('mousemove', handleMouseMove);
-    enableInputs();
-});
+// iOS は操作中にしか許可を要求できないので、最初のタップで要求する
+if (typeof DeviceMotionEvent !== 'undefined' &&
+    typeof DeviceMotionEvent.requestPermission === 'function') {
+    window.addEventListener('pointerdown', requestPermission, { once: true });
+}
 document.getElementById('resetBtn').addEventListener('click', fillCup);
 window.addEventListener('resize', layout);
 
