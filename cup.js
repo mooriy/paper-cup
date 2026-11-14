@@ -272,18 +272,29 @@ function drawShadow() {
     ctx.restore();
 }
 
+const RIM_RATIO = 0.42; // 斜め上から見下ろした時の口の楕円の縦横比
+
 function drawCupBack() {
     ctx.save();
     ctx.translate(CUP.x, CUP.y);
     ctx.rotate(CUP.tilt);
-    cupPath(0);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fill();
-    // 内側の奥の面
+    const top = -CUP.h / 2, bot = CUP.h / 2;
+    // 内側の壁 (口の楕円の内部)
+    const g = ctx.createLinearGradient(0, top - CUP.tw * RIM_RATIO, 0, bot);
+    g.addColorStop(0, '#f2f6f8');
+    g.addColorStop(1, '#c9d3da');
     ctx.beginPath();
-    ctx.ellipse(0, -CUP.h / 2, CUP.tw, CUP.tw * 0.16, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(214,196,168,0.55)';
+    ctx.ellipse(0, top, CUP.tw, CUP.tw * RIM_RATIO, 0, 0, Math.PI * 2);
+    ctx.fillStyle = g;
     ctx.fill();
+    // 底面
+    ctx.save();
+    ctx.clip();
+    ctx.beginPath();
+    ctx.ellipse(0, bot, CUP.bw, CUP.bw * RIM_RATIO, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.restore();
     ctx.restore();
 }
 
@@ -319,46 +330,34 @@ function drawCupFront() {
     ctx.translate(CUP.x, CUP.y);
     ctx.rotate(CUP.tilt);
     const top = -CUP.h / 2, bot = CUP.h / 2;
+    const rt = CUP.tw * RIM_RATIO, rb = CUP.bw * RIM_RATIO;
 
-    // 半透明の紙の胴体 + 縦のグラデーション
-    cupPath(0);
-    const g = ctx.createLinearGradient(-CUP.tw, 0, CUP.tw, 0);
-    g.addColorStop(0, 'rgba(255,255,255,0.35)');
-    g.addColorStop(0.25, 'rgba(255,255,255,0.05)');
-    g.addColorStop(0.75, 'rgba(255,255,255,0.05)');
-    g.addColorStop(1, 'rgba(120,130,150,0.22)');
-    ctx.fillStyle = g;
-    ctx.fill();
-
-    // 紙の壁 (厚み)
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#f4ead7';
-    ctx.lineWidth = CUP.wall;
+    // 手前側の胴体 (白い紙。水がうっすら透ける)
     ctx.beginPath();
     ctx.moveTo(-CUP.tw, top);
-    ctx.lineTo(-CUP.bw, bot);
+    ctx.ellipse(0, top, CUP.tw, rt, 0, Math.PI, 0, true);
     ctx.lineTo(CUP.bw, bot);
-    ctx.lineTo(CUP.tw, top);
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(140,110,70,0.5)';
+    ctx.ellipse(0, bot, CUP.bw, rb, 0, 0, Math.PI);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(-CUP.tw, 0, CUP.tw, 0);
+    g.addColorStop(0, 'rgba(255,255,255,0.7)');
+    g.addColorStop(0.5, 'rgba(250,252,255,0.5)');
+    g.addColorStop(1, 'rgba(205,213,222,0.75)');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160,170,185,0.5)';
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // 縁のロール (巻き込み)
-    ctx.strokeStyle = '#fffaf0';
-    ctx.lineWidth = CUP.wall * 1.6;
+    // 縁のロール
     ctx.beginPath();
-    ctx.moveTo(-CUP.tw - 1, top);
-    ctx.lineTo(CUP.tw + 1, top);
+    ctx.ellipse(0, top, CUP.tw, rt, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = CUP.wall * 1.6;
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(140,110,70,0.45)';
+    ctx.strokeStyle = 'rgba(160,170,185,0.5)';
     ctx.lineWidth = 1;
     ctx.stroke();
-
-    // 底の折り返し
-    ctx.fillStyle = '#e6d9bf';
-    ctx.fillRect(-CUP.bw - CUP.wall / 2, bot, CUP.bw * 2 + CUP.wall, CUP.wall * 1.2);
     ctx.restore();
 }
 
