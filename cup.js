@@ -4,6 +4,15 @@ const ctx = canvas.getContext('2d');
 const info = document.getElementById('info');
 const waterPercent = document.getElementById('waterPercent');
 
+const statusEl = document.getElementById('status');
+const sensitivityInput = document.getElementById('sensitivity');
+const sensitivityValue = document.getElementById('sensitivityValue');
+let sensitivity = 1;
+sensitivityInput.addEventListener('input', () => {
+    sensitivity = parseFloat(sensitivityInput.value);
+    sensitivityValue.textContent = sensitivity.toFixed(1) + 'x';
+});
+const effTilt = () => Math.max(-1.4, Math.min(1.4, deviceTilt * sensitivity));
 let S = 1;            // スケール (canvas幅/360)
 let CUP, WATER;
 const TARGET_COUNT = 320;
@@ -30,22 +39,14 @@ function makeSprite(r) {
 }
 
 function layout() {
-    const maxWidth = Math.min(window.innerWidth - 40, 600);
-    const maxHeight = Math.min(window.innerHeight * 0.7, 800);
-    const aspect = 0.6;
-    if (maxWidth / maxHeight > 1 / aspect) {
-        canvas.height = maxHeight;
-        canvas.width = maxHeight * aspect;
-    } else {
-        canvas.width = maxWidth;
-        canvas.height = maxWidth / aspect;
-    }
-    S = canvas.width / 360;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    S = Math.min(canvas.width * 0.94 / 160, canvas.height * 0.6 / 170);
     const h = 170 * S;
     CUP = {
         baseX: canvas.width / 2,
         x: canvas.width / 2,
-        y: canvas.height * 0.45,
+        y: canvas.height * 0.06 + h / 2 + 20 * S,
         h,
         tw: 78 * S,      // 口の半幅
         bw: 52 * S,      // 底の半幅
@@ -59,6 +60,7 @@ function layout() {
     layer.width = Math.ceil(canvas.width * RES);
     layer.height = Math.ceil(canvas.height * RES);
     makeSprite(WATER.r * 3.2 * RES);
+    statusEl.style.top = (CUP.y + h / 2 + 16) + 'px';
     fillCup();
 }
 
@@ -143,7 +145,7 @@ function step() {
     const { r, gravity } = WATER;
     const rot = CUP.tilt;
     // 水にかかる重力は端末の傾きに追従 (コップ自体は傾かない)
-    const gx = Math.sin(deviceTilt) * gravity, gy = Math.cos(deviceTilt) * gravity;
+    const gx = Math.sin(effTilt()) * gravity, gy = Math.cos(effTilt()) * gravity;
     const c = Math.cos(rot), s = Math.sin(rot);
     const t = CUP.wall / 2;
 
@@ -181,7 +183,7 @@ function step() {
         let lx = rx * c + ry * s;
         let ly = -rx * s + ry * c;
         const top = -CUP.h / 2, bot = CUP.h / 2;
-        const gap = r + t;
+        const gap = r * 1.9 + t; // 水の描画の広がり分も壁から離す
 
         if (p.inside) {
             if (ly < top) {
@@ -221,11 +223,11 @@ function step() {
 function update() {
     CUP.prevTilt = CUP.tilt;
     time += 1;
-    const mag = Math.min(1, Math.abs(deviceTilt) * 2);
+    const mag = Math.min(1, Math.abs(effTilt()) * 2);
     shakeX = Math.sin(time * 0.9) * (0.6 + mag * 1.2) * S;
     shakeA = Math.sin(time * 1.3) * (0.002 + mag * 0.004);
     CUP.x = CUP.baseX + shakeX;
-    CUP.tilt = deviceTilt * CUP_TILT_RATIO + shakeA;
+    CUP.tilt = effTilt() * CUP_TILT_RATIO + shakeA;
     const sub = 3;
     for (let i = 0; i < sub; i++) step();
 }
@@ -357,14 +359,6 @@ function drawCupFront() {
     // 底の折り返し
     ctx.fillStyle = '#e6d9bf';
     ctx.fillRect(-CUP.bw - CUP.wall / 2, bot, CUP.bw * 2 + CUP.wall, CUP.wall * 1.2);
-
-    // ハイライト
-    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-    ctx.lineWidth = 3 * S;
-    ctx.beginPath();
-    ctx.moveTo(-CUP.tw * 0.8, top + 12 * S);
-    ctx.lineTo(-CUP.bw * 0.82, bot - 14 * S);
-    ctx.stroke();
     ctx.restore();
 }
 
