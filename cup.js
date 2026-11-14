@@ -103,11 +103,14 @@ let accelX = 0; // ローパス後の横加速度 (m/s²)
 let rawAccelX = 0;
 let hasPermission = false;
 let listening = false;
+let permissionRequested = false;
 
 async function requestPermission() {
+    if (listening) return;
     try {
         if (typeof DeviceMotionEvent !== 'undefined' &&
             typeof DeviceMotionEvent.requestPermission === 'function') {
+            permissionRequested = true;
             const permission = await DeviceMotionEvent.requestPermission();
             if (permission === 'granted') {
                 hasPermission = true;
@@ -119,9 +122,19 @@ async function requestPermission() {
             window.addEventListener('devicemotion', handleDeviceMotion);
             window.addEventListener('mousemove', handleMouseMove);
         }
+        listening = true;
     } catch (e) {
+        console.error('Device motion permission request failed:', e);
         window.addEventListener('mousemove', handleMouseMove);
+        listening = true;
     }
+}
+
+function handlePermissionGesture(event) {
+    if (!event.isTrusted || permissionRequested) return;
+    permissionRequested = true;
+    window.removeEventListener('pointerdown', handlePermissionGesture);
+    void requestPermission();
 }
 
 function handleDeviceMotion(event) {
@@ -151,18 +164,18 @@ canvas.addEventListener('pointerdown', () => {
 });
 
 // 物理
-function step() {
+function step(input, settling) {
     const { r, gravity } = WATER;
     const rot = CUP.tilt;
     // 水にかかる重力は端末の傾きに追従 (コップ自体は傾かない)
-    const gx = lateral() * gravity, gy = gravity;
+    const gx = input * gravity, gy = gravity;
+    const damping = settling ? 0.85 : 0.995;
     const c = Math.cos(rot), s = Math.sin(rot);
     const t = CUP.wall / 2;
 
-    const calm = gx === 0;
     for (const p of particles) {
-        const vx = calm ? 0 : (p.x - p.px) * 0.995; // 揺れがない時は横に流れない
-        const vy = (p.y - p.py) * 0.995;
+        const vx = (p.x - p.px) * damping;
+        const vy = (p.y - p.py) * damping;
         p.px = p.x; p.py = p.y;
         p.x += vx;
         p.x += gx;
@@ -238,13 +251,15 @@ function update() {
     // 入力を平滑化 (ローパス) して手の微振動を抑える
     rawAccelX *= 0.9; // 入力が途絶えたら減衰 (マウス用)
     accelX += (rawAccelX - accelX) * 0.08;
-    const mag = Math.min(1, Math.abs(lateral()) * 2);
+    const input = lateral();
+    const mag = Math.min(1, Math.abs(input) * 2);
     shakeX = Math.sin(time * 0.9) * mag * 1.8 * S;
     shakeA = Math.sin(time * 1.3) * mag * 0.006;
     CUP.x = CUP.baseX + shakeX;
-    CUP.tilt = lateral() * CUP_TILT_RATIO + shakeA;
+    CUP.tilt = input * CUP_TILT_RATIO + shakeA;
+    const settling = Math.abs(input) < 0.05;
     const sub = 3;
-    for (let i = 0; i < sub; i++) step();
+    for (let i = 0; i < sub; i++) step(input, settling);
 }
 
 // 描画
@@ -380,7 +395,7 @@ function animate() {
 // iOS は操作中にしか許可を要求できないので、最初のタップで要求する
 if (typeof DeviceMotionEvent !== 'undefined' &&
     typeof DeviceMotionEvent.requestPermission === 'function') {
-    window.addEventListener('pointerdown', requestPermission, { once: true });
+    window.addEventListener('pointerdown', handlePermissionGesture);
 }
 document.getElementById('resetBtn').addEventListener('click', fillCup);
 window.addEventListener('resize', layout);
