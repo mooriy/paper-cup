@@ -15,7 +15,7 @@ sensitivityInput.addEventListener('input', () => {
 });
 const MAX_LATERAL = 0.8;  // 重力に対する横加速度の上限比
 const ACCEL_DEADZONE = 1.5; // m/s² 未満 (手持ちの微振動) は無視
-const BASE_SENSITIVITY = 1.5;
+const BASE_SENSITIVITY = 4.5;
 const WATER_GRAVITY = 0.08;
 // 横加速度 (m/s²) から重力に対する横方向の割合を求める
 const motionInput = (acceleration) => {

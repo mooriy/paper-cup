@@ -5,11 +5,15 @@ const source = await Deno.readTextFile(new URL("../cup.js", import.meta.url));
 
 function createSimulation() {
     const listeners = new Map();
-    const element = (id) => ({
-        style: {},
-        addEventListener(type, handler) { listeners.set(`${id}:${type}`, handler); },
-        getContext: () => ({}),
-    });
+    const elements = new Map();
+    const element = (id) => {
+        if (!elements.has(id)) elements.set(id, {
+            style: {},
+            addEventListener(type, handler) { listeners.set(`${id}:${type}`, handler); },
+            getContext: () => ({}),
+        });
+        return elements.get(id);
+    };
     const context = {
         window: { addEventListener() {}, removeEventListener() {} },
         document: { getElementById: element, querySelector: element, createElement: element },
@@ -29,17 +33,34 @@ function createSimulation() {
     return {
         run: (code) => runInNewContext(code, context),
         tap: () => listeners.get("canvas:pointerdown")(),
+        setSensitivity: (value) => {
+            element("sensitivity").value = String(value);
+            listeners.get("sensitivity:input")();
+            return element("sensitivityValue").textContent;
+        },
     };
 }
 
-Deno.test("default sensitivity matches the previous 1.5x setting", () => {
+Deno.test("default sensitivity matches the previous 3.0x setting", () => {
     const { run } = createSimulation();
-    for (const acceleration of [2, 4, -4, 8, 20]) {
+    for (const acceleration of [1, 1.6, 2, 4, -2, 20]) {
         run(`accelX = ${acceleration}`);
-        const expected = Math.min(0.8, (Math.abs(acceleration) - 1.5) * 1.5 / 9.8)
+        const expected = Math.min(0.8, Math.max(0, Math.abs(acceleration) - 1.5) * 4.5 / 9.8)
             * (acceleration < 0 ? 1 : -1);
         assert.ok(Math.abs(run("lateral()") - expected) < 1e-12);
     }
+});
+
+Deno.test("sensitivity slider supports 10.0x and controls all motion axes", async () => {
+    const html = await Deno.readTextFile(new URL("../index.html", import.meta.url));
+    assert.match(html, /id="sensitivity" min="0\.2" max="10" step="0\.1" value="1"/);
+    const app = createSimulation();
+    assert.equal(app.setSensitivity(10), "10.0x");
+    const expected = -(1.6 - 1.5) * 45 / 9.8;
+    assert.ok(Math.abs(app.run("motionInput(1.6)") - expected) < 1e-12);
+    assert.equal(app.run("motionInput(3)"), -0.8);
+    assert.equal(app.setSensitivity(1), "1.0x");
+    assert.ok(Math.abs(app.run("motionInput(1.6)") - expected / 10) < 1e-12);
 });
 
 Deno.test("waves continue after input and converge exactly flat", () => {
