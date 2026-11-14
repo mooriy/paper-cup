@@ -5,6 +5,7 @@ const info = document.getElementById('info');
 const waterPercent = document.getElementById('waterPercent');
 
 const statusEl = document.getElementById('status');
+const sensitivityEl = document.querySelector('.sensitivity');
 const sensitivityInput = document.getElementById('sensitivity');
 const sensitivityValue = document.getElementById('sensitivityValue');
 let sensitivity = 1;
@@ -15,7 +16,7 @@ sensitivityInput.addEventListener('input', () => {
 const effTilt = () => Math.max(-1.4, Math.min(1.4, deviceTilt * sensitivity));
 let S = 1;            // スケール (canvas幅/360)
 let CUP, WATER;
-const TARGET_COUNT = 320;
+const TARGET_COUNT = 800; // 初期水位80%に必要な粒子数
 const particles = [];
 let initialCount = 1;
 const CUP_TILT_RATIO = 0.04; // ダッシュボード固定: コップはほぼ傾かない
@@ -61,6 +62,7 @@ function layout() {
     layer.height = Math.ceil(canvas.height * RES);
     makeSprite(WATER.r * 3.2 * RES);
     statusEl.style.top = (CUP.y + h / 2 + 16) + 'px';
+    sensitivityEl.style.top = (CUP.y + h / 2 + 16 + 56) + 'px';
     fillCup();
 }
 
@@ -78,7 +80,7 @@ function fillCup() {
     particles.length = 0;
     const gap = WATER.r * 1.7;
     const bottom = CUP.h / 2 - WATER.r - CUP.wall;
-    const fillTop = CUP.h / 2 - CUP.h * 0.6;
+    const fillTop = CUP.h / 2 - CUP.h * 0.8;
     for (let y = bottom, row = 0; y > fillTop && particles.length < TARGET_COUNT; y -= gap * 0.9, row++) {
         const hw = halfWidth(y) - WATER.r - CUP.wall;
         for (let x = -hw + (row % 2) * gap / 2; x <= hw && particles.length < TARGET_COUNT; x += gap) {
@@ -223,9 +225,10 @@ function step() {
 function update() {
     CUP.prevTilt = CUP.tilt;
     time += 1;
-    const mag = Math.min(1, Math.abs(effTilt()) * 2);
-    shakeX = Math.sin(time * 0.9) * (0.6 + mag * 1.2) * S;
-    shakeA = Math.sin(time * 1.3) * (0.002 + mag * 0.004);
+    // ほとんど揺れていない時は揺らさない
+    const mag = Math.max(0, Math.min(1, (Math.abs(effTilt()) - 0.05) * 2));
+    shakeX = Math.sin(time * 0.9) * mag * 1.8 * S;
+    shakeA = Math.sin(time * 1.3) * mag * 0.006;
     CUP.x = CUP.baseX + shakeX;
     CUP.tilt = effTilt() * CUP_TILT_RATIO + shakeA;
     const sub = 3;
@@ -314,21 +317,6 @@ function drawCupFront() {
     g.addColorStop(1, 'rgba(120,130,150,0.22)');
     ctx.fillStyle = g;
     ctx.fill();
-
-    // 赤い帯の模様
-    ctx.save();
-    cupPath(0);
-    ctx.clip();
-    ctx.fillStyle = 'rgba(214,50,48,0.8)';
-    const bandTop = top + CUP.h * 0.55, bandBot = top + CUP.h * 0.78;
-    ctx.fillRect(-CUP.tw, bandTop, CUP.tw * 2, bandBot - bandTop);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    for (let i = -4; i <= 4; i++) {
-        ctx.beginPath();
-        ctx.arc(i * CUP.tw * 0.24, (bandTop + bandBot) / 2, CUP.h * 0.025, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    ctx.restore();
 
     // 紙の壁 (厚み)
     ctx.lineJoin = 'round';
