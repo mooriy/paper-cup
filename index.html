@@ -179,6 +179,20 @@
             opacity: 0.7;
             z-index: 10;
         }
+
+        .motion-permission {
+            position: fixed;
+            left: 10px;
+            right: 10px;
+            bottom: 32px;
+            color: white;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .motion-permission button {
+            margin-top: 6px;
+        }
     </style>
 </head>
 <body>
@@ -197,6 +211,10 @@
 
     <div class="info" id="info">
         Angle: 0°
+    </div>
+    <div class="motion-permission" id="motionPermission" hidden>
+        <div id="motionPermissionStatus" role="status"></div>
+        <button class="btn-primary" id="motionPermissionBtn" type="button">モーションセンサーを有効化</button>
     </div>
 
     <script src="cup.js"></script>

@@ -102,38 +102,51 @@ function fillCup() {
 let accelX = 0; // ローパス後の横加速度 (m/s²)
 let rawAccelX = 0;
 let hasPermission = false;
-let listening = false;
-let permissionRequested = false;
+let permissionPending = false;
+let motionTimeout;
+const motionPermission = document.getElementById('motionPermission');
+const motionPermissionStatus = document.getElementById('motionPermissionStatus');
+const motionPermissionBtn = document.getElementById('motionPermissionBtn');
+const requiresMotionPermission = typeof DeviceMotionEvent !== 'undefined' &&
+    typeof DeviceMotionEvent.requestPermission === 'function';
 
 async function requestPermission() {
-    if (listening) return;
+    if (permissionPending || hasPermission) return;
+    permissionPending = true;
+    motionPermissionBtn.disabled = true;
     try {
-        if (typeof DeviceMotionEvent !== 'undefined' &&
-            typeof DeviceMotionEvent.requestPermission === 'function') {
-            permissionRequested = true;
+        if (requiresMotionPermission) {
             const permission = await DeviceMotionEvent.requestPermission();
             if (permission === 'granted') {
                 hasPermission = true;
                 window.addEventListener('devicemotion', handleDeviceMotion);
+                motionPermissionBtn.hidden = true;
+                motionPermissionStatus.textContent = 'センサーのデータを待っています。';
+                motionTimeout = setTimeout(() => {
+                    motionPermissionStatus.textContent = 'センサーのデータを受信できません。Safariのモーションと画面の向きの設定を確認してください。';
+                }, 5000);
             } else {
                 window.addEventListener('mousemove', handleMouseMove);
+                motionPermissionStatus.textContent = 'センサーの使用が拒否されました。Safariの設定を確認してください。';
             }
         } else {
             window.addEventListener('devicemotion', handleDeviceMotion);
             window.addEventListener('mousemove', handleMouseMove);
         }
-        listening = true;
     } catch (e) {
         console.error('Device motion permission request failed:', e);
         window.addEventListener('mousemove', handleMouseMove);
-        listening = true;
+        motionPermission.hidden = false;
+        motionPermissionStatus.textContent = 'センサーの許可を取得できませんでした。HTTPS接続とSafariの設定を確認し、もう一度お試しください。';
+    } finally {
+        permissionPending = false;
+        motionPermissionBtn.disabled = false;
     }
 }
 
 function handlePermissionGesture(event) {
-    if (!event.isTrusted || permissionRequested) return;
-    permissionRequested = true;
-    window.removeEventListener('pointerdown', handlePermissionGesture);
+    if (!event.isTrusted || motionPermissionBtn.contains(event.target)) return;
+    window.removeEventListener('pointerup', handlePermissionGesture, true);
     void requestPermission();
 }
 
@@ -141,6 +154,8 @@ function handleDeviceMotion(event) {
     const a = event.acceleration;
     if (!a || a.x === null || a.x === undefined) return;
     hasPermission = true;
+    clearTimeout(motionTimeout);
+    motionPermission.hidden = true;
     rawAccelX = a.x;
 }
 
@@ -392,19 +407,23 @@ function animate() {
     requestAnimationFrame(animate);
 }
 
-// iOS は操作中にしか許可を要求できないので、最初のタップで要求する
-if (typeof DeviceMotionEvent !== 'undefined' &&
-    typeof DeviceMotionEvent.requestPermission === 'function') {
-    window.addEventListener('pointerdown', handlePermissionGesture);
+// iOS はタッチ完了後のユーザー操作中に許可を要求する
+if (requiresMotionPermission) {
+    motionPermission.hidden = false;
+    motionPermissionStatus.textContent = '画面をタップしてモーションセンサーを有効にしてください。';
+    window.addEventListener('pointerup', handlePermissionGesture, true);
 }
+motionPermissionBtn.addEventListener('click', () => {
+    window.removeEventListener('pointerup', handlePermissionGesture, true);
+    void requestPermission();
+});
 document.getElementById('resetBtn').addEventListener('click', fillCup);
 window.addEventListener('resize', layout);
 
 window.addEventListener('load', () => {
     layout();
     animate();
-    if (!(typeof DeviceMotionEvent !== 'undefined' &&
-          typeof DeviceMotionEvent.requestPermission === 'function')) {
+    if (!requiresMotionPermission) {
         requestPermission();
     }
 });
