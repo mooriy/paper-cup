@@ -123,8 +123,11 @@ Deno.test("gravity sensor detects static tilt and follows screen orientation", a
     });
     assert.ok(Math.abs(app.rawTilt() - Math.atan2(4, 8)) < 1e-10);
     assert.ok(Math.abs(app.rawDepth() - Math.atan2(4, 8)) < 1e-10);
-    assert.equal(app.element("gravityInfo").textContent, "重力加速度 (x / y / z): -4.0 / 8.0 / 4.0 m/s²");
-    assert.match(app.element("tiltInfo").textContent, /26\.6° \/ 26\.6°.*画面: 0°/);
+    assert.deepEqual(["gravityXInfo", "gravityYInfo", "gravityZInfo"].map(id => app.element(id).textContent),
+        ["-4.0", "8.0", "4.0"]);
+    assert.equal(app.element("tiltXInfo").textContent, "26.6");
+    assert.equal(app.element("tiltZInfo").textContent, "26.6");
+    assert.equal(app.element("orientationInfo").textContent, "0");
     app.setOrientation(90);
     app.dispatch("devicemotion", {
         acceleration: null,
@@ -132,10 +135,49 @@ Deno.test("gravity sensor detects static tilt and follows screen orientation", a
     });
     assert.ok(Math.abs(app.rawTilt() - Math.atan2(-8, 4)) < 1e-10);
     assert.ok(Math.abs(app.rawDepth() - Math.atan2(4, 4)) < 1e-10);
-    assert.match(app.element("tiltInfo").textContent, /-63\.4° \/ 45\.0°.*画面: 90°/);
+    assert.equal(app.element("tiltXInfo").textContent, "-63.4");
+    assert.equal(app.element("tiltZInfo").textContent, "45.0");
+    assert.equal(app.element("orientationInfo").textContent, "90");
     app.dispatch("devicemotion", { acceleration: null, accelerationIncludingGravity: null });
-    assert.match(app.element("gravityInfo").textContent, /未取得 \/ 未取得 \/ 未取得/);
-    assert.match(app.element("tiltInfo").textContent, /未取得 \/ 未取得/);
+    for (const id of ["gravityXInfo", "gravityYInfo", "gravityZInfo", "tiltXInfo", "tiltZInfo"]) {
+        assert.equal(app.element(id).textContent, "未取得");
+    }
+});
+
+Deno.test("inverted sensors calibrate upright near 180 degrees on both axes", async () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.clickButton();
+    await flush();
+    const motion = (xDegrees, zDegrees) => app.dispatch("devicemotion", {
+        acceleration: null,
+        accelerationIncludingGravity: {
+            x: 9.8 * Math.tan(xDegrees * Math.PI / 180),
+            y: -9.8,
+            z: 9.8 * Math.tan(zDegrees * Math.PI / 180),
+        },
+    });
+    motion(0, 0);
+    assert.equal(app.run("gravityPolarity"), -1);
+    for (const [x, z] of [[30, 30], [-30, -30], [30.01, 0], [0, -30.01]]) {
+        motion(x, z);
+        assert.equal(app.element("resetBtn").attributes["aria-disabled"],
+            Math.abs(x) <= 30 && Math.abs(z) <= 30 ? "false" : "true");
+    }
+    app.dispatch("devicemotion", { accelerationIncludingGravity: { x: 0, y: 9.8, z: 0 } });
+    assert.equal(app.run("gravityPolarity"), -1);
+    assert.equal(app.element("resetBtn").attributes["aria-disabled"], "true");
+});
+
+Deno.test("the first inverted reading at the 30-degree boundary establishes the upright reference", async () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.clickButton();
+    await flush();
+    const axis = 9.8 * Math.tan(Math.PI / 6);
+    app.dispatch("devicemotion", {
+        accelerationIncludingGravity: { x: axis, y: -9.8, z: -axis },
+    });
+    assert.equal(app.run("gravityPolarity"), -1);
+    assert.equal(app.element("resetBtn").attributes["aria-disabled"], "false");
 });
 
 Deno.test("reset requires a recent upright gravity reading", async () => {

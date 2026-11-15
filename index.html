@@ -192,25 +192,32 @@
             opacity: 0.8;
         }
 
-        .info {
+        .footer {
             position: fixed;
             bottom: 28px;
             left: 10px;
             right: 10px;
-            color: white;
-            font-size: 10px;
-            opacity: 0.7;
             z-index: 10;
         }
 
+        .info {
+            color: white;
+            font-size: 10px;
+            opacity: 0.7;
+        }
+
+        .measurement {
+            display: inline-block;
+            width: 7ch;
+            text-align: right;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-variant-numeric: tabular-nums;
+        }
+
         .motion-permission {
-            position: fixed;
-            left: 10px;
-            right: 10px;
-            bottom: 80px;
             color: white;
             font-size: 12px;
-            z-index: 10;
+            margin-bottom: 6px;
         }
 
         .motion-permission button {
@@ -237,14 +244,29 @@
         </div>
     </div>
 
-    <div class="info">
-        <div id="info">加速度: 未受信</div>
-        <div id="gravityInfo">重力加速度: 未受信</div>
-        <div id="tiltInfo">傾き: 未受信</div>
-    </div>
-    <div class="motion-permission" id="motionPermission" hidden>
-        <div id="motionPermissionStatus" role="status"></div>
-        <button class="btn-primary" id="motionPermissionBtn" type="button">モーションセンサーを有効化</button>
+    <div class="footer">
+        <div class="motion-permission" id="motionPermission" hidden>
+            <div id="motionPermissionStatus" role="status"></div>
+            <button class="btn-primary" id="motionPermissionBtn" type="button">モーションセンサーを有効化</button>
+        </div>
+        <div class="info">
+            <div>加速度（左右 / 上下 / 前後）:
+                <span class="measurement" id="accelXInfo">未取得</span> /
+                <span class="measurement" id="accelYInfo">未取得</span> /
+                <span class="measurement" id="accelZInfo">未取得</span> m/s²
+            </div>
+            <div>重力加速度 (x / y / z):
+                <span class="measurement" id="gravityXInfo">未取得</span> /
+                <span class="measurement" id="gravityYInfo">未取得</span> /
+                <span class="measurement" id="gravityZInfo">未取得</span> m/s²
+            </div>
+            <div>傾き（左右 / 前後）:
+                <span class="measurement" id="tiltXInfo">未取得</span>° /
+                <span class="measurement" id="tiltZInfo">未取得</span>°
+                画面: <span class="measurement" id="orientationInfo">未取得</span>°
+                (旧: <span class="measurement" id="legacyOrientationInfo">未取得</span>)
+            </div>
+        </div>
     </div>
 
     <script src="cup.js"></script>

@@ -134,6 +134,24 @@ Deno.test("static gravity tilt sets the water plane without rotating the cup", (
         (CUP.tw - CUP.bw) * CUP.h * 0.8 ** 2) * waterCount / initialCount`)) < 0.001);
 });
 
+Deno.test("inverted gravity calibration keeps upright water still and preserves tilt response", () => {
+    const normal = createSimulation();
+    const inverted = createSimulation();
+    for (const [app, sign] of [[normal, 1], [inverted, -1]]) {
+        app.run(`handleDeviceMotion({ accelerationIncludingGravity: { x: 0, y: ${sign} * 9.8, z: 0 } });
+            for (let i = 0; i < 400; i++) update();`);
+        assert.equal(app.run("waterCount"), app.run("initialCount"));
+        assert.ok(Math.abs(app.run("CUP.waterTilt")) < 1e-10);
+        assert.ok(Math.abs(app.run("depthWave")) < 1e-10);
+        app.run(`handleDeviceMotion({ accelerationIncludingGravity: {
+            x: ${sign} * -3, y: ${sign} * 9.8, z: ${sign} * 2 } });
+            for (let i = 0; i < 150; i++) update();`);
+    }
+    assert.ok(Math.abs(normal.run("CUP.waterTilt") - inverted.run("CUP.waterTilt")) < 1e-10);
+    assert.ok(Math.abs(normal.run("depthWave") - inverted.run("depthWave")) < 1e-10);
+    assert.equal(normal.run("waterCount"), inverted.run("waterCount"));
+});
+
 Deno.test("static front-back tilt creates a persistent depth response", () => {
     const { run } = createSimulation();
     run(`rawGravityDepth = 0.3;

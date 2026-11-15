@@ -1,9 +1,11 @@
 // 紙コップ水シミュレーター
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const info = document.getElementById('info');
-const gravityInfo = document.getElementById('gravityInfo');
-const tiltInfo = document.getElementById('tiltInfo');
+const accelInfo = ['accelXInfo', 'accelYInfo', 'accelZInfo'].map(id => document.getElementById(id));
+const gravityInfo = ['gravityXInfo', 'gravityYInfo', 'gravityZInfo'].map(id => document.getElementById(id));
+const tiltInfo = ['tiltXInfo', 'tiltZInfo'].map(id => document.getElementById(id));
+const orientationInfo = document.getElementById('orientationInfo');
+const legacyOrientationInfo = document.getElementById('legacyOrientationInfo');
 const waterPercent = document.getElementById('waterPercent');
 const resetBtn = document.getElementById('resetBtn');
 const resetWarning = document.getElementById('resetWarning');
@@ -129,6 +131,7 @@ let rawGravityTilt = 0, gravityTilt = 0;
 let rawGravityDepth = 0, gravityDepth = 0;
 const RESET_MAX_TILT = Math.PI / 6;
 const RESET_SENSOR_TIMEOUT = 2000;
+let gravityPolarity = 0;
 let resetUpright = false;
 let resetSensorTime = 0;
 let resetSensorOrientation = 0;
@@ -186,18 +189,10 @@ function handleDeviceMotion(event) {
     const g = event.accelerationIncludingGravity;
     const orientation = window.screen?.orientation?.angle ?? window.orientation ?? 0;
     const angle = orientation * Math.PI / 180;
-    if (g && [g.x, g.y, g.z].every(Number.isFinite)) {
-        const gy = -g.x * Math.sin(angle) + g.y * Math.cos(angle);
-        const magnitude = Math.hypot(g.x, g.y, g.z);
-        resetUpright = magnitude >= 1 && gy / magnitude >= Math.cos(RESET_MAX_TILT);
-        resetSensorTime = Date.now();
-        resetSensorOrientation = orientation;
-    } else {
-        resetUpright = false;
-    }
-    updateResetButton();
     if ((!a || ![a.x, a.y, a.z].some(Number.isFinite)) &&
         (!g || ![g.x, g.y, g.z].some(Number.isFinite))) {
+        resetUpright = false;
+        updateResetButton();
         updateGravityInfo(g, orientation);
         return;
     }
@@ -216,6 +211,27 @@ function handleDeviceMotion(event) {
         const gy = -gx * Math.sin(angle) + g.y * Math.cos(angle);
         rawGravityDepth = Math.atan2(g.z, gy);
     }
+    if (g && [g.x, g.y, g.z].every(Number.isFinite)) {
+        const magnitude = Math.hypot(g.x, g.y, g.z);
+        const gy = -g.x * Math.sin(angle) + g.y * Math.cos(angle);
+        const tolerance = RESET_MAX_TILT + 1e-12;
+        const nearZero = Math.abs(rawGravityTilt) <= tolerance &&
+            Math.abs(rawGravityDepth) <= tolerance;
+        const nearHalfTurn = Math.PI - Math.abs(rawGravityTilt) <= tolerance &&
+            Math.PI - Math.abs(rawGravityDepth) <= tolerance;
+        // 正立時の最初の測定でセンサーの符号を決め、その後は端末を逆さにしても切り替えない。
+        if (!gravityPolarity && magnitude >= 1) {
+            if (nearZero) gravityPolarity = 1;
+            else if (nearHalfTurn) gravityPolarity = -1;
+        }
+        resetUpright = magnitude >= 1 && (gravityPolarity === -1 ?
+            nearHalfTurn : gy / magnitude >= Math.cos(RESET_MAX_TILT));
+        resetSensorTime = Date.now();
+        resetSensorOrientation = orientation;
+    } else {
+        resetUpright = false;
+    }
+    updateResetButton();
     updateGravityInfo(g, orientation);
     hasPermission = true;
     clearTimeout(motionTimeout);
@@ -227,10 +243,11 @@ function updateGravityInfo(g, orientation) {
     const hasTilt = g && Number.isFinite(g.x) && Number.isFinite(g.y);
     const hasDepth = g && Number.isFinite(g.y) && Number.isFinite(g.z);
     const degrees = (radians) => format(radians * 180 / Math.PI);
-    const legacyOrientation = Number.isFinite(window.orientation) ? `${window.orientation}°` : '未取得';
-    gravityInfo.textContent = `重力加速度 (x / y / z): ${format(g?.x)} / ${format(g?.y)} / ${format(g?.z)} m/s²`;
-    tiltInfo.textContent = `傾き (左右 / 前後): ${hasTilt ? degrees(rawGravityTilt) + '°' : '未取得'} / ` +
-        `${hasDepth ? degrees(rawGravityDepth) + '°' : '未取得'}　画面: ${orientation}° (旧: ${legacyOrientation})`;
+    [g?.x, g?.y, g?.z].forEach((value, i) => { gravityInfo[i].textContent = format(value); });
+    tiltInfo[0].textContent = hasTilt ? degrees(rawGravityTilt) : '未取得';
+    tiltInfo[1].textContent = hasDepth ? degrees(rawGravityDepth) : '未取得';
+    orientationInfo.textContent = String(orientation);
+    legacyOrientationInfo.textContent = Number.isFinite(window.orientation) ? `${window.orientation}°` : '未取得';
 }
 
 function canReset() {
@@ -400,14 +417,18 @@ function update() {
     accelX += (rawAccelX - accelX) * 0.08;
     accelY += (rawAccelY - accelY) * 0.08;
     accelZ += (rawAccelZ - accelZ) * 0.08;
+    const tiltTarget = gravityPolarity === -1 ?
+        Math.atan2(-Math.sin(rawGravityTilt), -Math.cos(rawGravityTilt)) : rawGravityTilt;
+    const depthTarget = gravityPolarity === -1 ?
+        Math.atan2(-Math.sin(rawGravityDepth), -Math.cos(rawGravityDepth)) : rawGravityDepth;
     const gravityTiltDelta = Math.atan2(
-        Math.sin(rawGravityTilt - gravityTilt),
-        Math.cos(rawGravityTilt - gravityTilt)
+        Math.sin(tiltTarget - gravityTilt),
+        Math.cos(tiltTarget - gravityTilt)
     );
     gravityTilt += gravityTiltDelta * 0.08;
     const gravityDepthDelta = Math.atan2(
-        Math.sin(rawGravityDepth - gravityDepth),
-        Math.cos(rawGravityDepth - gravityDepth)
+        Math.sin(depthTarget - gravityDepth),
+        Math.cos(depthTarget - gravityDepth)
     );
     gravityDepth += gravityDepthDelta * 0.08;
     const input = lateral();
@@ -618,7 +639,7 @@ function animate(timestamp) {
     drawCupFront();
 
     const pct = Math.min(100, Math.round(waterCount / initialCount * 100));
-    info.textContent = `加速度（左右 / 上下 / 前後）: ${accelX.toFixed(1)} / ${accelY.toFixed(1)} / ${accelZ.toFixed(1)} m/s²`;
+    [accelX, accelY, accelZ].forEach((value, i) => { accelInfo[i].textContent = value.toFixed(1); });
     waterPercent.textContent = `水の残量: ${pct}%`;
     updateResetButton();
     requestAnimationFrame(animate);
