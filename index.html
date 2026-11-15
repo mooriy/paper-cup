@@ -204,14 +204,50 @@
             color: white;
             font-size: 10px;
             opacity: 0.7;
+            display: grid;
+            grid-template-columns: max-content 7ch 1ch 7ch 1ch 7ch max-content;
+            column-gap: 0.5ch;
+            align-items: baseline;
+        }
+
+        .info-row {
+            display: contents;
         }
 
         .measurement {
-            display: inline-block;
-            width: 7ch;
             text-align: right;
             font-family: ui-monospace, Menlo, Consolas, monospace;
             font-variant-numeric: tabular-nums;
+        }
+
+        @media (max-width: 340px) {
+            .info {
+                font-size: 9px;
+            }
+        }
+
+        .wake-lock-status {
+            color: white;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+
+        .calibration-dialog {
+            margin: auto;
+            max-width: 300px;
+            padding: 24px;
+            border: 0;
+            border-radius: 16px;
+            text-align: center;
+        }
+
+        .calibration-dialog::backdrop {
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        .calibration-dialog p {
+            margin-bottom: 20px;
+            line-height: 1.5;
         }
 
         .motion-permission {
@@ -244,27 +280,37 @@
         </div>
     </div>
 
+    <dialog class="calibration-dialog" id="calibrationDialog" aria-labelledby="calibrationMessage">
+        <p id="calibrationMessage">端末を垂直状態にしてください。OKを押したときの傾きをゼロ位置にします。</p>
+        <div class="button-group">
+            <button class="btn-secondary" id="calibrationCancel" type="button">キャンセル</button>
+            <button class="btn-primary" id="calibrationOk" type="button">OK</button>
+        </div>
+    </dialog>
+
     <div class="footer">
+        <div class="wake-lock-status" id="wakeLockStatus" role="status" hidden></div>
         <div class="motion-permission" id="motionPermission" hidden>
             <div id="motionPermissionStatus" role="status"></div>
             <button class="btn-primary" id="motionPermissionBtn" type="button">モーションセンサーを有効化</button>
         </div>
         <div class="info">
-            <div>加速度（左右 / 上下 / 前後）:
-                <span class="measurement" id="accelXInfo">未取得</span> /
-                <span class="measurement" id="accelYInfo">未取得</span> /
-                <span class="measurement" id="accelZInfo">未取得</span> m/s²
+            <div class="info-row">
+                <span>端末加速度 (x / y / z):</span>
+                <span class="measurement" id="accelXInfo">未取得</span><span>/</span>
+                <span class="measurement" id="accelYInfo">未取得</span><span>/</span>
+                <span class="measurement" id="accelZInfo">未取得</span><span>m/s²</span>
             </div>
-            <div>重力加速度 (x / y / z):
-                <span class="measurement" id="gravityXInfo">未取得</span> /
-                <span class="measurement" id="gravityYInfo">未取得</span> /
-                <span class="measurement" id="gravityZInfo">未取得</span> m/s²
+            <div class="info-row">
+                <span>重力加速度 (x / y / z):</span>
+                <span class="measurement" id="gravityXInfo">未取得</span><span>/</span>
+                <span class="measurement" id="gravityYInfo">未取得</span><span>/</span>
+                <span class="measurement" id="gravityZInfo">未取得</span><span>m/s²</span>
             </div>
-            <div>傾き（左右 / 前後）:
-                <span class="measurement" id="tiltXInfo">未取得</span>° /
-                <span class="measurement" id="tiltZInfo">未取得</span>°
-                画面: <span class="measurement" id="orientationInfo">未取得</span>°
-                (旧: <span class="measurement" id="legacyOrientationInfo">未取得</span>)
+            <div class="info-row">
+                <span>傾き（左右 / 前後）:</span>
+                <span class="measurement" id="tiltXInfo">未取得</span><span>/</span>
+                <span class="measurement" id="tiltZInfo">未取得</span><span>°</span>
             </div>
         </div>
     </div>

@@ -4,11 +4,10 @@ const ctx = canvas.getContext('2d');
 const accelInfo = ['accelXInfo', 'accelYInfo', 'accelZInfo'].map(id => document.getElementById(id));
 const gravityInfo = ['gravityXInfo', 'gravityYInfo', 'gravityZInfo'].map(id => document.getElementById(id));
 const tiltInfo = ['tiltXInfo', 'tiltZInfo'].map(id => document.getElementById(id));
-const orientationInfo = document.getElementById('orientationInfo');
-const legacyOrientationInfo = document.getElementById('legacyOrientationInfo');
 const waterPercent = document.getElementById('waterPercent');
 const resetBtn = document.getElementById('resetBtn');
 const resetWarning = document.getElementById('resetWarning');
+const calibrationDialog = document.getElementById('calibrationDialog');
 let resetWarningTimeout;
 
 const statusEl = document.getElementById('status');
@@ -66,7 +65,10 @@ function makeSprite(r) {
 function layout() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    S = Math.min(canvas.width * 0.94 / 160, canvas.height * 0.6 / 170);
+    const footerHeight = document.querySelector('.footer').offsetHeight;
+    const availableHeight = canvas.height * 0.94 - 16 - 56 - 20 - 28 - footerHeight - 44;
+    S = Math.max(0.1, Math.min(canvas.width * 0.94 / 160, canvas.height * 0.6 / 170,
+        availableHeight / (190 + 52 * 0.42)));
     const h = 170 * S;
     CUP = {
         baseX: canvas.width / 2,
@@ -86,8 +88,9 @@ function layout() {
     layer.width = Math.ceil(canvas.width * RES);
     layer.height = Math.ceil(canvas.height * RES);
     makeSprite(WATER.r * 3.2 * RES);
-    statusEl.style.top = (CUP.y + h / 2 + 16) + 'px';
-    sensitivityEl.style.top = (CUP.y + h / 2 + 16 + 56) + 'px';
+    const statusTop = CUP.y + h / 2 + CUP.bw * RIM_RATIO + 16;
+    statusEl.style.top = statusTop + 'px';
+    sensitivityEl.style.top = (statusTop + 56) + 'px';
     fillCup();
 }
 
@@ -129,10 +132,13 @@ let accelY = 0, accelZ = 0;
 let rawAccelY = 0, rawAccelZ = 0;
 let rawGravityTilt = 0, gravityTilt = 0;
 let rawGravityDepth = 0, gravityDepth = 0;
+let gravityTiltOffset = 0, gravityDepthOffset = 0;
+let latestGravity = null;
 const RESET_MAX_TILT = Math.PI / 6;
 const RESET_SENSOR_TIMEOUT = 2000;
 let gravityPolarity = 0;
 let resetUpright = false;
+let resetSensorValid = false;
 let resetSensorTime = 0;
 let resetSensorOrientation = 0;
 let hasPermission = false;
@@ -143,6 +149,54 @@ const motionPermissionStatus = document.getElementById('motionPermissionStatus')
 const motionPermissionBtn = document.getElementById('motionPermissionBtn');
 const requiresMotionPermission = typeof DeviceMotionEvent !== 'undefined' &&
     typeof DeviceMotionEvent.requestPermission === 'function';
+const wakeLockStatus = document.getElementById('wakeLockStatus');
+let wakeLock = null;
+let wakeLockPending = false;
+let wakeLockNeedsRestore = false;
+
+async function requestWakeLock() {
+    if (wakeLock?.released) wakeLock = null;
+    if (document.visibilityState === 'hidden' || wakeLock || wakeLockPending) return;
+    if (typeof navigator === 'undefined' || !navigator.wakeLock) {
+        wakeLockStatus.hidden = false;
+        wakeLockStatus.textContent = '画面の自動ロック防止に対応していません。端末の設定を確認してください。';
+        return;
+    }
+    wakeLockPending = true;
+    try {
+        const lock = await navigator.wakeLock.request('screen');
+        if (document.visibilityState === 'hidden') {
+            await lock.release();
+            return;
+        }
+        wakeLock = lock;
+        wakeLockNeedsRestore = false;
+        wakeLockStatus.hidden = true;
+        lock.addEventListener('release', () => {
+            if (wakeLock !== lock) return;
+            wakeLock = null;
+            if (document.visibilityState !== 'hidden') {
+                if (wakeLockNeedsRestore) {
+                    wakeLockNeedsRestore = false;
+                    void requestWakeLock();
+                    return;
+                }
+                wakeLockStatus.hidden = false;
+                wakeLockStatus.textContent = '画面の自動ロック防止が解除されました。画面をタップして再試行してください。';
+            }
+        });
+    } catch (error) {
+        console.error('Screen wake lock request failed:', error);
+        wakeLockStatus.hidden = false;
+        wakeLockStatus.textContent = '画面の自動ロックを防止できません。画面をタップして再試行してください。';
+    } finally {
+        wakeLockPending = false;
+        if (wakeLockNeedsRestore && document.visibilityState === 'visible' && !wakeLock) {
+            wakeLockNeedsRestore = false;
+            void requestWakeLock();
+        }
+    }
+}
 
 async function requestPermission() {
     if (permissionPending || hasPermission) return;
@@ -193,13 +247,14 @@ function screenRotation() {
 function handleDeviceMotion(event) {
     const a = event.acceleration;
     const g = event.accelerationIncludingGravity;
+    latestGravity = g;
     const orientation = screenRotation();
     const angle = orientation * Math.PI / 180;
     if ((!a || ![a.x, a.y, a.z].some(Number.isFinite)) &&
         (!g || ![g.x, g.y, g.z].some(Number.isFinite))) {
         resetUpright = false;
+        resetSensorValid = false;
         updateResetButton();
-        updateGravityInfo(g);
         return;
     }
     const x = a && Number.isFinite(a.x) ? a.x : 0;
@@ -219,6 +274,7 @@ function handleDeviceMotion(event) {
     }
     if (g && [g.x, g.y, g.z].every(Number.isFinite)) {
         const magnitude = Math.hypot(g.x, g.y, g.z);
+        resetSensorValid = magnitude >= 1;
         const gy = -g.x * Math.sin(angle) + g.y * Math.cos(angle);
         const tolerance = RESET_MAX_TILT + 1e-12;
         const nearZero = Math.abs(rawGravityTilt) <= tolerance &&
@@ -231,14 +287,16 @@ function handleDeviceMotion(event) {
             else if (nearHalfTurn) gravityPolarity = -1;
         }
         resetUpright = magnitude >= 1 && (gravityPolarity === -1 ?
-            nearHalfTurn : gy / magnitude >= Math.cos(RESET_MAX_TILT));
+            Math.PI - Math.abs(rawGravityTilt) < RESET_MAX_TILT - 1e-12 &&
+                Math.PI - Math.abs(rawGravityDepth) < RESET_MAX_TILT - 1e-12 :
+            gy / magnitude > Math.cos(RESET_MAX_TILT) + 1e-12);
         resetSensorTime = Date.now();
         resetSensorOrientation = orientation;
     } else {
         resetUpright = false;
+        resetSensorValid = false;
     }
     updateResetButton();
-    updateGravityInfo(g);
     hasPermission = true;
     clearTimeout(motionTimeout);
     motionPermission.hidden = true;
@@ -252,13 +310,10 @@ function updateGravityInfo(g) {
     [g?.x, g?.y, g?.z].forEach((value, i) => { gravityInfo[i].textContent = format(value); });
     tiltInfo[0].textContent = hasTilt ? degrees(rawGravityTilt) : '未取得';
     tiltInfo[1].textContent = hasDepth ? degrees(rawGravityDepth) : '未取得';
-    const screenAngle = window.screen?.orientation?.angle;
-    orientationInfo.textContent = Number.isFinite(screenAngle) ? String(screenAngle) : '未取得';
-    legacyOrientationInfo.textContent = Number.isFinite(window.orientation) ? `${window.orientation}°` : '未取得';
 }
 
 function canReset() {
-    return resetUpright && Date.now() - resetSensorTime <= RESET_SENSOR_TIMEOUT &&
+    return resetSensorValid && Date.now() - resetSensorTime <= RESET_SENSOR_TIMEOUT &&
         resetSensorOrientation === screenRotation();
 }
 
@@ -424,10 +479,8 @@ function update() {
     accelX += (rawAccelX - accelX) * 0.08;
     accelY += (rawAccelY - accelY) * 0.08;
     accelZ += (rawAccelZ - accelZ) * 0.08;
-    const tiltTarget = gravityPolarity === -1 ?
-        Math.atan2(-Math.sin(rawGravityTilt), -Math.cos(rawGravityTilt)) : rawGravityTilt;
-    const depthTarget = gravityPolarity === -1 ?
-        Math.atan2(-Math.sin(rawGravityDepth), -Math.cos(rawGravityDepth)) : rawGravityDepth;
+    const tiltTarget = calibratedGravityAngle(rawGravityTilt, gravityTiltOffset);
+    const depthTarget = calibratedGravityAngle(rawGravityDepth, gravityDepthOffset);
     const gravityTiltDelta = Math.atan2(
         Math.sin(tiltTarget - gravityTilt),
         Math.cos(tiltTarget - gravityTilt)
@@ -451,6 +504,11 @@ function update() {
     updateSurface(input, vertical, depth);
     spillWater();
     for (let i = 0; i < 3; i++) stepDroplets(input);
+}
+
+function calibratedGravityAngle(angle, offset) {
+    const adjusted = angle + (gravityPolarity === -1 ? Math.PI : 0) - offset;
+    return Math.atan2(Math.sin(adjusted), Math.cos(adjusted));
 }
 
 const PHYSICS_FRAME_MS = 1000 / 60;
@@ -637,6 +695,15 @@ function drawCupFront() {
     ctx.restore();
 }
 
+let lastInfoUpdate = null;
+
+function updateInfo(timestamp) {
+    if (lastInfoUpdate !== null && timestamp - lastInfoUpdate < 500) return;
+    [accelX, accelY, accelZ].forEach((value, i) => { accelInfo[i].textContent = value.toFixed(1); });
+    updateGravityInfo(latestGravity);
+    lastInfoUpdate = timestamp;
+}
+
 function animate(timestamp) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     advancePhysics(timestamp);
@@ -646,7 +713,7 @@ function animate(timestamp) {
     drawCupFront();
 
     const pct = Math.min(100, Math.round(waterCount / initialCount * 100));
-    [accelX, accelY, accelZ].forEach((value, i) => { accelInfo[i].textContent = value.toFixed(1); });
+    updateInfo(timestamp);
     waterPercent.textContent = `水の残量: ${pct}%`;
     updateResetButton();
     requestAnimationFrame(animate);
@@ -662,23 +729,52 @@ motionPermissionBtn.addEventListener('click', () => {
     window.removeEventListener('pointerup', handlePermissionGesture, true);
     void requestPermission();
 });
-resetBtn.addEventListener('click', () => {
+function resetAndCalibrate() {
     if (!canReset()) {
         updateResetButton();
-        resetWarning.textContent = '端末を立てた状態でボタンを押してください。';
+        resetWarning.textContent = '姿勢を取得できません。端末を立てた状態でボタンを押してください。';
         clearTimeout(resetWarningTimeout);
         resetWarningTimeout = setTimeout(() => {
             resetWarning.textContent = '';
         }, 3000);
         return;
     }
+    if (!gravityPolarity) gravityPolarity = Math.cos(rawGravityTilt) < 0 ? -1 : 1;
+    gravityTiltOffset = calibratedGravityAngle(rawGravityTilt, 0);
+    gravityDepthOffset = calibratedGravityAngle(rawGravityDepth, 0);
+    gravityTilt = 0;
+    gravityDepth = 0;
     fillCup();
+}
+
+resetBtn.addEventListener('click', () => {
+    if (canReset() && !resetUpright) {
+        calibrationDialog.showModal();
+        return;
+    }
+    resetAndCalibrate();
+});
+document.getElementById('calibrationCancel').addEventListener('click', () => {
+    calibrationDialog.close();
+});
+document.getElementById('calibrationOk').addEventListener('click', () => {
+    calibrationDialog.close();
+    resetAndCalibrate();
 });
 window.addEventListener('resize', layout);
+window.addEventListener('pointerup', () => { void requestWakeLock(); });
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        wakeLockNeedsRestore = true;
+    } else {
+        void requestWakeLock();
+    }
+});
 
 window.addEventListener('load', () => {
     layout();
     requestAnimationFrame(animate);
+    void requestWakeLock();
     if (!requiresMotionPermission) {
         requestPermission();
     }

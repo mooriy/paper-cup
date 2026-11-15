@@ -17,7 +17,7 @@ function createSimulation() {
     };
     const context = {
         window: { addEventListener() {}, removeEventListener() {} },
-        document: { getElementById: element, querySelector: element, createElement: element },
+        document: { getElementById: element, querySelector: element, createElement: element, addEventListener() {} },
         console, setTimeout, clearTimeout,
     };
     runInNewContext(source, context);
@@ -34,6 +34,7 @@ function createSimulation() {
     return {
         run: (code) => runInNewContext(code, context),
         tap: () => listeners.get("canvas:pointerdown")(),
+        reset: () => listeners.get("resetBtn:click")(),
         setSensitivity: (value) => {
             element("sensitivity").value = String(value);
             listeners.get("sensitivity:input")();
@@ -150,6 +151,30 @@ Deno.test("inverted gravity calibration keeps upright water still and preserves 
     assert.ok(Math.abs(normal.run("CUP.waterTilt") - inverted.run("CUP.waterTilt")) < 1e-10);
     assert.ok(Math.abs(normal.run("depthWave") - inverted.run("depthWave")) < 1e-10);
     assert.equal(normal.run("waterCount"), inverted.run("waterCount"));
+});
+
+Deno.test("reset calibrates both tilt axes at the current position for either sensor polarity", () => {
+    for (const sign of [-1, 1]) {
+        const app = createSimulation();
+        const { run } = app;
+        run(`handleDeviceMotion({ accelerationIncludingGravity: {
+            x: ${sign} * -2, y: ${sign} * 9.8, z: ${sign} * 3 } });
+            for (let i = 0; i < 80; i++) update();`);
+        app.reset();
+        run("for (let i = 0; i < 150; i++) update()");
+        assert.ok(Math.abs(run("CUP.waterTilt")) < 1e-10);
+        assert.ok(Math.abs(run("depthWave")) < 1e-10);
+        assert.equal(run("waterCount"), run("initialCount"));
+        run(`handleDeviceMotion({ accelerationIncludingGravity: {
+            x: ${sign} * -3, y: ${sign} * 9.8, z: ${sign} * 4 } });
+            for (let i = 0; i < 150; i++) update();`);
+        assert.ok(run("CUP.waterTilt") > 0.05);
+        assert.ok(run("depthWave") > 1);
+        app.reset();
+        run("for (let i = 0; i < 200; i++) update()");
+        assert.ok(Math.abs(run("CUP.waterTilt")) < 1e-10);
+        assert.ok(Math.abs(run("depthWave")) < 1e-10);
+    }
 });
 
 Deno.test("iPad orientation discrepancy does not spill water while upright", () => {
