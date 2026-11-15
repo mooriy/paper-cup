@@ -184,16 +184,22 @@ function handlePermissionGesture(event) {
     void requestPermission();
 }
 
+function screenRotation() {
+    if (Number.isFinite(window.orientation)) return window.orientation;
+    if (Number.isFinite(window.screen?.orientation?.angle)) return window.screen.orientation.angle;
+    return 0;
+}
+
 function handleDeviceMotion(event) {
     const a = event.acceleration;
     const g = event.accelerationIncludingGravity;
-    const orientation = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+    const orientation = screenRotation();
     const angle = orientation * Math.PI / 180;
     if ((!a || ![a.x, a.y, a.z].some(Number.isFinite)) &&
         (!g || ![g.x, g.y, g.z].some(Number.isFinite))) {
         resetUpright = false;
         updateResetButton();
-        updateGravityInfo(g, orientation);
+        updateGravityInfo(g);
         return;
     }
     const x = a && Number.isFinite(a.x) ? a.x : 0;
@@ -232,13 +238,13 @@ function handleDeviceMotion(event) {
         resetUpright = false;
     }
     updateResetButton();
-    updateGravityInfo(g, orientation);
+    updateGravityInfo(g);
     hasPermission = true;
     clearTimeout(motionTimeout);
     motionPermission.hidden = true;
 }
 
-function updateGravityInfo(g, orientation) {
+function updateGravityInfo(g) {
     const format = (value) => Number.isFinite(value) ? value.toFixed(1) : '未取得';
     const hasTilt = g && Number.isFinite(g.x) && Number.isFinite(g.y);
     const hasDepth = g && Number.isFinite(g.y) && Number.isFinite(g.z);
@@ -246,13 +252,14 @@ function updateGravityInfo(g, orientation) {
     [g?.x, g?.y, g?.z].forEach((value, i) => { gravityInfo[i].textContent = format(value); });
     tiltInfo[0].textContent = hasTilt ? degrees(rawGravityTilt) : '未取得';
     tiltInfo[1].textContent = hasDepth ? degrees(rawGravityDepth) : '未取得';
-    orientationInfo.textContent = String(orientation);
+    const screenAngle = window.screen?.orientation?.angle;
+    orientationInfo.textContent = Number.isFinite(screenAngle) ? String(screenAngle) : '未取得';
     legacyOrientationInfo.textContent = Number.isFinite(window.orientation) ? `${window.orientation}°` : '未取得';
 }
 
 function canReset() {
     return resetUpright && Date.now() - resetSensorTime <= RESET_SENSOR_TIMEOUT &&
-        resetSensorOrientation === (window.screen?.orientation?.angle ?? window.orientation ?? 0);
+        resetSensorOrientation === screenRotation();
 }
 
 function updateResetButton() {

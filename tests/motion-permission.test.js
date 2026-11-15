@@ -61,6 +61,7 @@ function createApp(requestPermission) {
         rawTilt() { return runInNewContext("rawGravityTilt", context); },
         rawDepth() { return runInNewContext("rawGravityDepth", context); },
         setOrientation(angle) { window.screen = { orientation: { angle } }; },
+        setLegacyOrientation(angle) { window.orientation = angle; },
         dispatch(type, event) {
             for (const handler of [...(listeners.get(type) || [])]) handler(event);
         },
@@ -127,7 +128,7 @@ Deno.test("gravity sensor detects static tilt and follows screen orientation", a
         ["-4.0", "8.0", "4.0"]);
     assert.equal(app.element("tiltXInfo").textContent, "26.6");
     assert.equal(app.element("tiltZInfo").textContent, "26.6");
-    assert.equal(app.element("orientationInfo").textContent, "0");
+    assert.equal(app.element("orientationInfo").textContent, "未取得");
     app.setOrientation(90);
     app.dispatch("devicemotion", {
         acceleration: null,
@@ -142,6 +143,38 @@ Deno.test("gravity sensor detects static tilt and follows screen orientation", a
     for (const id of ["gravityXInfo", "gravityYInfo", "gravityZInfo", "tiltXInfo", "tiltZInfo"]) {
         assert.equal(app.element(id).textContent, "未取得");
     }
+});
+
+Deno.test("iPad uses the legacy orientation when screen and device coordinates differ", async () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.setOrientation(90);
+    app.setLegacyOrientation(0);
+    app.clickButton();
+    await flush();
+    app.dispatch("devicemotion", {
+        acceleration: { x: 2, y: 3, z: 0 },
+        accelerationIncludingGravity: { x: 0, y: -9.8, z: 0 },
+    });
+    assert.deepEqual(Array.from(app.axes()), [2, 3, 0]);
+    assert.equal(app.run("gravityPolarity"), -1);
+    assert.ok(Math.abs(Math.abs(app.rawTilt()) - Math.PI) < 1e-10);
+    assert.ok(Math.abs(Math.abs(app.rawDepth()) - Math.PI) < 1e-10);
+    assert.equal(app.element("resetBtn").attributes["aria-disabled"], "false");
+    assert.equal(app.element("orientationInfo").textContent, "90");
+    assert.equal(app.element("legacyOrientationInfo").textContent, "0°");
+    app.setOrientation(180);
+    assert.equal(app.run("canReset()"), true);
+    app.setLegacyOrientation(90);
+    assert.equal(app.run("canReset()"), false);
+    app.dispatch("devicemotion", {
+        acceleration: { x: 2, y: 3, z: 0 },
+        accelerationIncludingGravity: { x: 9.8, y: 0, z: 0 },
+    });
+    assert.ok(Math.abs(app.axes()[0] - 3) < 1e-10);
+    assert.ok(Math.abs(app.axes()[1] + 2) < 1e-10);
+    assert.equal(app.element("resetBtn").attributes["aria-disabled"], "false");
+    app.setLegacyOrientation(NaN);
+    assert.equal(app.run("screenRotation()"), 180);
 });
 
 Deno.test("inverted sensors calibrate upright near 180 degrees on both axes", async () => {

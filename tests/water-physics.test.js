@@ -152,6 +152,18 @@ Deno.test("inverted gravity calibration keeps upright water still and preserves 
     assert.equal(normal.run("waterCount"), inverted.run("waterCount"));
 });
 
+Deno.test("iPad orientation discrepancy does not spill water while upright", () => {
+    const { run } = createSimulation();
+    run(`window.screen = { orientation: { angle: 90 } };
+        window.orientation = 0;
+        handleDeviceMotion({ accelerationIncludingGravity: { x: 0, y: -9.8, z: 0 } });
+        for (let i = 0; i < 400; i++) update();`);
+    assert.equal(run("gravityPolarity"), -1);
+    assert.equal(run("waterCount"), run("initialCount"));
+    assert.ok(Math.abs(run("CUP.waterTilt")) < 1e-10);
+    assert.ok(Math.abs(run("depthWave")) < 1e-10);
+});
+
 Deno.test("static front-back tilt creates a persistent depth response", () => {
     const { run } = createSimulation();
     run(`rawGravityDepth = 0.3;
