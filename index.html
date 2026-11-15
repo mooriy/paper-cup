@@ -79,6 +79,18 @@
             z-index: 10;
         }
 
+        .reset-warning {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            right: 0;
+            color: #ff6b6b;
+            font-size: 14px;
+            text-align: center;
+            text-shadow: 0 0 4px #000;
+            pointer-events: none;
+        }
+
         .sensitivity {
             position: fixed;
             left: 0;
@@ -165,6 +177,11 @@
             opacity: 0.8;
         }
 
+        .btn-primary[aria-disabled="true"] {
+            background: #777;
+            color: #eee;
+        }
+
         .btn-secondary {
             background: #e0e0e0;
             color: #333;
@@ -177,8 +194,9 @@
 
         .info {
             position: fixed;
-            bottom: 10px;
+            bottom: 28px;
             left: 10px;
+            right: 10px;
             color: white;
             font-size: 10px;
             opacity: 0.7;
@@ -189,7 +207,7 @@
             position: fixed;
             left: 10px;
             right: 10px;
-            bottom: 32px;
+            bottom: 80px;
             color: white;
             font-size: 12px;
             z-index: 10;
@@ -208,8 +226,9 @@
             <p>バージョン 1.0.0</p>
         </div>
         <div class="status" id="status">
+            <div class="reset-warning" id="resetWarning" role="alert"></div>
             <span id="waterPercent">水の残量: 100%</span>
-            <button class="btn-primary" id="resetBtn">リセット</button>
+            <button class="btn-primary" id="resetBtn" aria-disabled="true">リセット</button>
         </div>
         <div class="sensitivity">
             <label for="sensitivity">感度</label>
@@ -218,8 +237,10 @@
         </div>
     </div>
 
-    <div class="info" id="info">
-        Angle: 0°
+    <div class="info">
+        <div id="info">加速度: 未受信</div>
+        <div id="gravityInfo">重力加速度: 未受信</div>
+        <div id="tiltInfo">傾き: 未受信</div>
     </div>
     <div class="motion-permission" id="motionPermission" hidden>
         <div id="motionPermissionStatus" role="status"></div>

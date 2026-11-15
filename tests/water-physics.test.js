@@ -9,6 +9,7 @@ function createSimulation() {
     const element = (id) => {
         if (!elements.has(id)) elements.set(id, {
             style: {},
+            setAttribute() {},
             addEventListener(type, handler) { listeners.set(`${id}:${type}`, handler); },
             getContext: () => ({}),
         });

@@ -2,7 +2,12 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const info = document.getElementById('info');
+const gravityInfo = document.getElementById('gravityInfo');
+const tiltInfo = document.getElementById('tiltInfo');
 const waterPercent = document.getElementById('waterPercent');
+const resetBtn = document.getElementById('resetBtn');
+const resetWarning = document.getElementById('resetWarning');
+let resetWarningTimeout;
 
 const statusEl = document.getElementById('status');
 const sensitivityEl = document.querySelector('.sensitivity');
@@ -122,6 +127,11 @@ let accelY = 0, accelZ = 0;
 let rawAccelY = 0, rawAccelZ = 0;
 let rawGravityTilt = 0, gravityTilt = 0;
 let rawGravityDepth = 0, gravityDepth = 0;
+const RESET_MAX_TILT = Math.PI / 6;
+const RESET_SENSOR_TIMEOUT = 2000;
+let resetUpright = false;
+let resetSensorTime = 0;
+let resetSensorOrientation = 0;
 let hasPermission = false;
 let permissionPending = false;
 let motionTimeout;
@@ -174,11 +184,25 @@ function handlePermissionGesture(event) {
 function handleDeviceMotion(event) {
     const a = event.acceleration;
     const g = event.accelerationIncludingGravity;
+    const orientation = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+    const angle = orientation * Math.PI / 180;
+    if (g && [g.x, g.y, g.z].every(Number.isFinite)) {
+        const gy = -g.x * Math.sin(angle) + g.y * Math.cos(angle);
+        const magnitude = Math.hypot(g.x, g.y, g.z);
+        resetUpright = magnitude >= 1 && gy / magnitude >= Math.cos(RESET_MAX_TILT);
+        resetSensorTime = Date.now();
+        resetSensorOrientation = orientation;
+    } else {
+        resetUpright = false;
+    }
+    updateResetButton();
     if ((!a || ![a.x, a.y, a.z].some(Number.isFinite)) &&
-        (!g || ![g.x, g.y, g.z].some(Number.isFinite))) return;
+        (!g || ![g.x, g.y, g.z].some(Number.isFinite))) {
+        updateGravityInfo(g, orientation);
+        return;
+    }
     const x = a && Number.isFinite(a.x) ? a.x : 0;
     const y = a && Number.isFinite(a.y) ? a.y : 0;
-    const angle = (window.screen?.orientation?.angle ?? window.orientation ?? 0) * Math.PI / 180;
     rawAccelX = x * Math.cos(angle) + y * Math.sin(angle);
     rawAccelY = -x * Math.sin(angle) + y * Math.cos(angle);
     rawAccelZ = a && Number.isFinite(a.z) ? a.z : 0;
@@ -192,9 +216,35 @@ function handleDeviceMotion(event) {
         const gy = -gx * Math.sin(angle) + g.y * Math.cos(angle);
         rawGravityDepth = Math.atan2(g.z, gy);
     }
+    updateGravityInfo(g, orientation);
     hasPermission = true;
     clearTimeout(motionTimeout);
     motionPermission.hidden = true;
+}
+
+function updateGravityInfo(g, orientation) {
+    const format = (value) => Number.isFinite(value) ? value.toFixed(1) : '未取得';
+    const hasTilt = g && Number.isFinite(g.x) && Number.isFinite(g.y);
+    const hasDepth = g && Number.isFinite(g.y) && Number.isFinite(g.z);
+    const degrees = (radians) => format(radians * 180 / Math.PI);
+    const legacyOrientation = Number.isFinite(window.orientation) ? `${window.orientation}°` : '未取得';
+    gravityInfo.textContent = `重力加速度 (x / y / z): ${format(g?.x)} / ${format(g?.y)} / ${format(g?.z)} m/s²`;
+    tiltInfo.textContent = `傾き (左右 / 前後): ${hasTilt ? degrees(rawGravityTilt) + '°' : '未取得'} / ` +
+        `${hasDepth ? degrees(rawGravityDepth) + '°' : '未取得'}　画面: ${orientation}° (旧: ${legacyOrientation})`;
+}
+
+function canReset() {
+    return resetUpright && Date.now() - resetSensorTime <= RESET_SENSOR_TIMEOUT &&
+        resetSensorOrientation === (window.screen?.orientation?.angle ?? window.orientation ?? 0);
+}
+
+function updateResetButton() {
+    const enabled = canReset();
+    resetBtn.setAttribute('aria-disabled', String(!enabled));
+    if (enabled && resetWarning.textContent) {
+        resetWarning.textContent = '';
+        clearTimeout(resetWarningTimeout);
+    }
 }
 
 function handleMouseMove(event) {
@@ -570,6 +620,7 @@ function animate(timestamp) {
     const pct = Math.min(100, Math.round(waterCount / initialCount * 100));
     info.textContent = `加速度（左右 / 上下 / 前後）: ${accelX.toFixed(1)} / ${accelY.toFixed(1)} / ${accelZ.toFixed(1)} m/s²`;
     waterPercent.textContent = `水の残量: ${pct}%`;
+    updateResetButton();
     requestAnimationFrame(animate);
 }
 
@@ -583,7 +634,18 @@ motionPermissionBtn.addEventListener('click', () => {
     window.removeEventListener('pointerup', handlePermissionGesture, true);
     void requestPermission();
 });
-document.getElementById('resetBtn').addEventListener('click', fillCup);
+resetBtn.addEventListener('click', () => {
+    if (!canReset()) {
+        updateResetButton();
+        resetWarning.textContent = '端末を立てた状態でボタンを押してください。';
+        clearTimeout(resetWarningTimeout);
+        resetWarningTimeout = setTimeout(() => {
+            resetWarning.textContent = '';
+        }, 3000);
+        return;
+    }
+    fillCup();
+});
 window.addEventListener('resize', layout);
 
 window.addEventListener('load', () => {

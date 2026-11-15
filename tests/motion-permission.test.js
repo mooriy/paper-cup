@@ -16,6 +16,8 @@ function createApp(requestPermission) {
                 disabled: false,
                 textContent: "",
                 style: {},
+                attributes: {},
+                setAttribute(name, value) { this.attributes[name] = value; },
                 getContext: () => ({}),
                 contains(target) { return target === this; },
                 addEventListener(type, handler) {
@@ -44,8 +46,8 @@ function createApp(requestPermission) {
         },
         DeviceMotionEvent: { requestPermission },
         console: { error() {} },
-        setTimeout(callback) {
-            timers.set(++timerId, callback);
+        setTimeout(callback, delay) {
+            timers.set(++timerId, { callback, delay });
             return timerId;
         },
         clearTimeout(id) { timers.delete(id); },
@@ -53,6 +55,7 @@ function createApp(requestPermission) {
     runInNewContext(source, context);
     return {
         element,
+        run(code) { return runInNewContext(code, context); },
         acceleration() { return runInNewContext("rawAccelX", context); },
         axes() { return runInNewContext("[rawAccelX, rawAccelY, rawAccelZ]", context); },
         rawTilt() { return runInNewContext("rawGravityTilt", context); },
@@ -62,8 +65,10 @@ function createApp(requestPermission) {
             for (const handler of [...(listeners.get(type) || [])]) handler(event);
         },
         clickButton() { listeners.get("motionPermissionBtn:click")(); },
+        clickReset() { listeners.get("resetBtn:click")(); },
+        timerDelays() { return Array.from(timers.values(), (timer) => timer.delay); },
         runTimers() {
-            for (const callback of timers.values()) callback();
+            for (const { callback } of timers.values()) callback();
             timers.clear();
         },
     };
@@ -118,6 +123,8 @@ Deno.test("gravity sensor detects static tilt and follows screen orientation", a
     });
     assert.ok(Math.abs(app.rawTilt() - Math.atan2(4, 8)) < 1e-10);
     assert.ok(Math.abs(app.rawDepth() - Math.atan2(4, 8)) < 1e-10);
+    assert.equal(app.element("gravityInfo").textContent, "重力加速度 (x / y / z): -4.0 / 8.0 / 4.0 m/s²");
+    assert.match(app.element("tiltInfo").textContent, /26\.6° \/ 26\.6°.*画面: 0°/);
     app.setOrientation(90);
     app.dispatch("devicemotion", {
         acceleration: null,
@@ -125,6 +132,72 @@ Deno.test("gravity sensor detects static tilt and follows screen orientation", a
     });
     assert.ok(Math.abs(app.rawTilt() - Math.atan2(-8, 4)) < 1e-10);
     assert.ok(Math.abs(app.rawDepth() - Math.atan2(4, 4)) < 1e-10);
+    assert.match(app.element("tiltInfo").textContent, /-63\.4° \/ 45\.0°.*画面: 90°/);
+    app.dispatch("devicemotion", { acceleration: null, accelerationIncludingGravity: null });
+    assert.match(app.element("gravityInfo").textContent, /未取得 \/ 未取得 \/ 未取得/);
+    assert.match(app.element("tiltInfo").textContent, /未取得 \/ 未取得/);
+});
+
+Deno.test("reset requires a recent upright gravity reading", async () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.run("globalThis.resets = 0; fillCup = () => resets++");
+    const button = app.element("resetBtn");
+    app.clickReset();
+    assert.equal(app.run("resets"), 0);
+    assert.equal(button.attributes["aria-disabled"], "true");
+    assert.match(app.element("resetWarning").textContent, /端末を立てた状態でボタンを押してください/);
+
+    app.clickButton();
+    await flush();
+    const motion = (gravity) => app.dispatch("devicemotion", {
+        acceleration: null, accelerationIncludingGravity: gravity,
+    });
+    const tilted = (degrees) => ({
+        x: 9.8 * Math.sin(degrees * Math.PI / 180),
+        y: 9.8 * Math.cos(degrees * Math.PI / 180),
+        z: 0,
+    });
+    motion(tilted(29));
+    assert.equal(button.attributes["aria-disabled"], "false");
+    assert.equal(app.element("resetWarning").textContent, "");
+    app.clickReset();
+    assert.equal(app.run("resets"), 1);
+
+    app.setOrientation(90);
+    app.clickReset();
+    assert.equal(button.attributes["aria-disabled"], "true");
+    assert.equal(app.run("resets"), 1);
+    app.setOrientation(0);
+    for (const gravity of [tilted(31), { x: 0, y: 0, z: 9.8 },
+        { x: 0, y: -9.8, z: 0 }, { x: 0, y: 0, z: 0 },
+        { x: null, y: 9.8, z: 0 }, null]) {
+        motion(gravity);
+        assert.equal(button.attributes["aria-disabled"], "true");
+        app.clickReset();
+        assert.equal(app.run("resets"), 1);
+    }
+
+    app.setOrientation(90);
+    motion({ x: -9.8, y: 0, z: 0 });
+    assert.equal(button.attributes["aria-disabled"], "false");
+    assert.equal(app.element("resetWarning").textContent, "");
+    app.clickReset();
+    assert.equal(app.run("resets"), 2);
+    app.run("resetSensorTime = Date.now() - 2001");
+    app.clickReset();
+    assert.equal(button.attributes["aria-disabled"], "true");
+    assert.equal(app.run("resets"), 2);
+});
+
+Deno.test("reset warning disappears after three seconds and repeated taps restart the timer", () => {
+    const app = createApp(() => Promise.resolve("granted"));
+    app.clickReset();
+    assert.match(app.element("resetWarning").textContent, /端末を立てた状態/);
+    assert.deepEqual(app.timerDelays(), [3000]);
+    app.clickReset();
+    assert.deepEqual(app.timerDelays(), [3000]);
+    app.runTimers();
+    assert.equal(app.element("resetWarning").textContent, "");
 });
 
 Deno.test("reports missing sensor data after permission is granted", async () => {
